@@ -195,10 +195,13 @@ fn make_icon() -> Icon {
                 rgba[idx + 2] = 0xF4;
                 rgba[idx + 3] = 255;
                 if dist > inner {
-                    let ring = ((dist - inner) / (r - inner) * 255.0) as u8;
-                    rgba[idx] = 255 - (255 - rgba[idx]) * ring / 255;
-                    rgba[idx + 1] = 255 - (255 - rgba[idx + 1]) * ring / 255;
-                    rgba[idx + 2] = 255 - (255 - rgba[idx + 2]) * ring / 255;
+                    // Blend the outer ring toward white. Use u32 math so the
+                    // multiply can't overflow a u8 (debug builds panic).
+                    let t = ((dist - inner) / (r - inner) * 255.0) as u32;
+                    let blend = |c: u8| (255 - (255 - c as u32) * t / 255) as u8;
+                    rgba[idx] = blend(rgba[idx]);
+                    rgba[idx + 1] = blend(rgba[idx + 1]);
+                    rgba[idx + 2] = blend(rgba[idx + 2]);
                 }
             }
         }
