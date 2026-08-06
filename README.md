@@ -129,11 +129,11 @@ artifacts to a GitHub Release:
 | Linux x86_64 | `openchromecast-linux-x86_64.tar.gz` (binary) |
 | Linux arm64 | `openchromecast-linux-arm64.tar.gz` (binary) |
 
-To publish **v1.0.0**: tag and push:
+To publish a release (e.g. **v1.0.1**): tag and push:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 The macOS `.app` is ad-hoc signed (`codesign -s -`, see `scripts/package-macos.sh`). For
