@@ -134,7 +134,10 @@ async fn connect_ipc(
     Box<dyn AsyncWrite + Unpin + Send>,
 )> {
     let path = path.to_string();
-    let stream = retry(|| UnixStream::connect(&path)).await?;
+    // std's UnixStream::connect is synchronous, which is what retry() expects.
+    let stream = retry(|| std::os::unix::net::UnixStream::connect(&path)).await?;
+    stream.set_nonblocking(true)?;
+    let stream = UnixStream::from_std(stream)?;
     let (r, w) = tokio::io::split(stream);
     Ok((Box::new(r), Box::new(w)))
 }
