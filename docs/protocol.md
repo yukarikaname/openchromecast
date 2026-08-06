@@ -116,8 +116,21 @@ AuthResponse {
 
 `playerState`: `IDLE`, `BUFFERING`, `PLAYING`, `PAUSED`.
 
-`supportedMediaCommands` bitmask: `1`=PAUSE, `2`=SEEK, `4`=STREAM_VOLUME, `8`=STREAM_MUTE
-(15 = all four).
+`supportedMediaCommands` bitmask (values verified against the Android Cast SDK / pychromecast):
+
+| Bit | Command |
+|-----|---------|
+| 1 | PAUSE |
+| 2 | SEEK |
+| 4 | STREAM_VOLUME |
+| 8 | STREAM_MUTE |
+| 64 | QUEUE_NEXT |
+| 128 | QUEUE_PREV |
+| 256 | QUEUE_SHUFFLE |
+| 1024 | QUEUE_REPEAT_ALL |
+| 2048 | QUEUE_REPEAT_ONE |
+
+This receiver advertises `15 | 64 | 128 = 207` (pause/seek/volume/mute + next/prev).
 
 ## Command flow summary
 

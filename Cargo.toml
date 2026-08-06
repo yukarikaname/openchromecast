@@ -1,6 +1,6 @@
 [package]
 name = "openchromecast"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "Chromecast (Google Cast) receiver emulator written in Rust — 'openchromecast'"
 license = "MIT"
@@ -27,9 +27,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+auto-launch = "0.5"
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tray-icon = "0.19"
 time = { version = "0.3", features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
+winit = "0.30"

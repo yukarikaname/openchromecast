@@ -12,19 +12,29 @@ mod proto;
 mod receiver;
 mod server;
 mod state;
+mod tray;
 mod youtube;
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = config::parse();
+    init_tracing(&cli);
+    if cli.no_tray {
+        // Headless / server mode (CI, SSH, `--player none` testing).
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(run_receiver(cli, Arc::new(Notify::new())))
+    } else {
+        tray::run(cli)
+    }
+}
 
+fn init_tracing(cli: &config::Cli) {
     let level = match cli.verbose {
         0 => "info",
         1 => "debug",
@@ -35,7 +45,11 @@ async fn main() -> Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level)),
         )
         .init();
+}
 
+/// The core receiver: identity, mDNS, player backend, TLS listener. Runs until
+/// the listener ends, Ctrl-C, or the tray requests shutdown.
+pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Result<()> {
     let device_id = match &cli.device_id {
         Some(d) => d.clone(),
         // Full 128-bit UUID (32 hex chars): pychromecast explicitly ignores
@@ -110,6 +124,9 @@ async fn main() -> Result<()> {
         r = server::run(listener, shared) => r?,
         _ = tokio::signal::ctrl_c() => {
             info!("received Ctrl-C, shutting down");
+        }
+        _ = shutdown.notified() => {
+            info!("exit requested, shutting down");
         }
     }
 

@@ -11,6 +11,12 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tracing::{info, warn};
 
+/// Commands this receiver advertises. PAUSE|SEEK|STREAM_VOLUME|STREAM_MUTE
+/// (15) plus QUEUE_NEXT (64) and QUEUE_PREV (128) so the sender enables the
+/// next/previous controls. Bit values match the Android Cast SDK /
+/// pychromecast constants.
+const SUPPORTED_MEDIA_COMMANDS: i64 = 15 | 64 | 128;
+
 pub async fn handle(
     msg: &crate::proto::cast_channel::CastMessage,
     tx: &MessageSink,
@@ -51,6 +57,44 @@ pub async fn handle(
             respond_media_status_idle(tx, msg, shared, &rid).await
         }
         "GET_STATUS" => respond_media_status(tx, msg, shared, &rid, media_session_id).await,
+        "QUEUE_LOAD" => handle_queue_load(msg, tx, shared, &payload, &rid).await,
+        "QUEUE_INSERT" => handle_queue_insert(msg, tx, shared, &payload, &rid).await,
+        "QUEUE_NEXT" => {
+            let moved = {
+                let mut st = shared.state.lock().await;
+                match st.session.as_mut() {
+                    Some(s) if !s.queue.is_empty() && s.queue_index + 1 < s.queue.len() => {
+                        s.queue_index += 1;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if moved {
+                play_queue_item(shared, true).await?;
+            }
+            respond_media_status(tx, msg, shared, &rid, media_session_id).await
+        }
+        "QUEUE_PREV" => {
+            let moved = {
+                let mut st = shared.state.lock().await;
+                match st.session.as_mut() {
+                    Some(s) if !s.queue.is_empty() && s.queue_index > 0 => {
+                        s.queue_index -= 1;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if moved {
+                play_queue_item(shared, true).await?;
+            }
+            respond_media_status(tx, msg, shared, &rid, media_session_id).await
+        }
+        "QUEUE_UPDATE" => {
+            // Repeat/shuffle settings: acknowledged (no-op for now).
+            respond_media_status(tx, msg, shared, &rid, media_session_id).await
+        }
         other => {
             warn!("unhandled media message type: {other}");
             Ok(())
@@ -96,11 +140,15 @@ async fn handle_load(
     let session_id = {
         let mut st = shared.state.lock().await;
         st.session.as_mut().map(|s| {
-            s.media = Some(MediaInfo {
+            let item = MediaInfo {
                 content_id: content_id.clone(),
                 content_type: content_type.clone(),
                 stream_type: stream_type.clone(),
-            });
+            };
+            s.media = Some(item.clone());
+            // A LOAD (re)starts the queue as a single item.
+            s.queue = vec![item];
+            s.queue_index = 0;
             s.id.clone()
         })
     };
@@ -144,10 +192,33 @@ async fn media_status(shared: &Shared) -> Option<Value> {
         "playbackRate": 1,
         "playerState": state_str,
         "currentTime": snap.position,
-        "supportedMediaCommands": 15,
+        "supportedMediaCommands": SUPPORTED_MEDIA_COMMANDS,
         "volume": { "level": st.volume, "muted": st.muted },
         "media": media,
     });
+    if !session.queue.is_empty() {
+        let items: Vec<Value> = session
+            .queue
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                json!({
+                    "itemId": i,
+                    "media": {
+                        "contentId": m.content_id,
+                        "contentType": m.content_type,
+                        "streamType": m.stream_type,
+                    },
+                })
+            })
+            .collect();
+        status["items"] = json!(items);
+        status["queueData"] = json!({
+            "currentItemId": session.queue_index,
+            "repeatMode": "REPEAT_OFF",
+            "shuffle": false,
+        });
+    }
     if snap.state == PlayerState::Ended {
         status["idleReason"] = json!("FINISHED");
     }
@@ -194,7 +265,7 @@ async fn respond_media_status_idle(
         "mediaSessionId": mid,
         "playerState": "IDLE",
         "idleReason": "CANCELLED",
-        "supportedMediaCommands": 15,
+        "supportedMediaCommands": SUPPORTED_MEDIA_COMMANDS,
         "volume": { "level": st.volume, "muted": st.muted },
         "media": media,
     });
@@ -247,6 +318,118 @@ fn spawn_status_poller(tx: MessageSink, shared: Shared, session_id: String) {
             last = snap;
         }
     });
+}
+
+/// Build a `MediaInfo` from a Cast `media` object (if it has a contentId).
+fn media_info_from(media: &Value) -> Option<MediaInfo> {
+    let content_id = media.get("contentId")?.as_str()?.to_string();
+    let content_type = media
+        .get("contentType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("video/mp4")
+        .to_string();
+    let stream_type = media
+        .get("streamType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("BUFFERED")
+        .to_string();
+    Some(MediaInfo {
+        content_id,
+        content_type,
+        stream_type,
+    })
+}
+
+/// Play the item at the session's current queue index.
+async fn play_queue_item(shared: &Shared, autoplay: bool) -> Result<()> {
+    let item = {
+        let mut st = shared.state.lock().await;
+        let session = match st.session.as_mut() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        if session.queue.is_empty() {
+            return Ok(());
+        }
+        let idx = session.queue_index.min(session.queue.len() - 1);
+        let item = session.queue[idx].clone();
+        session.media = Some(item.clone());
+        item
+    };
+    info!("queue: now playing {} ({})", item.content_id, item.content_type);
+    shared.player.load(&item.content_id, 0.0, autoplay).await?;
+    Ok(())
+}
+
+/// `QUEUE_LOAD { items, startIndex }`: replace the whole queue and play.
+async fn handle_queue_load(
+    msg: &crate::proto::cast_channel::CastMessage,
+    tx: &MessageSink,
+    shared: &Shared,
+    payload: &Value,
+    rid: &Value,
+) -> Result<()> {
+    let items: Vec<MediaInfo> = payload
+        .get("items")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| it.get("media").and_then(media_info_from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let start = payload
+        .get("startIndex")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    {
+        let mut st = shared.state.lock().await;
+        if let Some(s) = st.session.as_mut() {
+            s.queue = items;
+            s.queue_index = start.min(s.queue.len().saturating_sub(1));
+        }
+    }
+    play_queue_item(shared, true).await?;
+    respond_media_status(tx, msg, shared, rid, 0).await
+}
+
+/// `QUEUE_INSERT { items }`: append to the queue; start playing if empty.
+async fn handle_queue_insert(
+    msg: &crate::proto::cast_channel::CastMessage,
+    tx: &MessageSink,
+    shared: &Shared,
+    payload: &Value,
+    rid: &Value,
+) -> Result<()> {
+    let items: Vec<MediaInfo> = payload
+        .get("items")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| it.get("media").and_then(media_info_from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let started_playing = {
+        let mut st = shared.state.lock().await;
+        match st.session.as_mut() {
+            Some(s) => {
+                let was_empty = s.queue.is_empty();
+                s.queue.extend(items);
+                if was_empty && !s.queue.is_empty() {
+                    s.queue_index = 0;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        }
+    };
+    if started_playing {
+        play_queue_item(shared, true).await?;
+    }
+    respond_media_status(tx, msg, shared, rid, 0).await
 }
 
 /// Map our player state onto the Cast `playerState` string.

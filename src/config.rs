@@ -58,6 +58,10 @@ pub struct Cli {
     #[arg(long, default_value_t = 4212)]
     pub vlc_port: u16,
 
+    /// Disable the system tray icon (headless / server mode).
+    #[arg(long)]
+    pub no_tray: bool,
+
     /// Increase log verbosity (-v, -vv).
     #[arg(short, action = clap::ArgAction::Count)]
     pub verbose: u8,

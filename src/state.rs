@@ -20,6 +20,10 @@ pub struct Session {
     pub status_text: String,
     pub media_session_id: u32,
     pub media: Option<MediaInfo>,
+    /// Playback queue (drives QUEUE_NEXT / QUEUE_PREV navigation).
+    pub queue: Vec<MediaInfo>,
+    /// Index of the currently playing item in `queue`.
+    pub queue_index: usize,
 }
 
 /// Global receiver state, shared between all connections.

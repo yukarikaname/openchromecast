@@ -180,6 +180,8 @@ impl Session {
             status_text: "Ready to cast".to_string(),
             media_session_id,
             media: None,
+            queue: Vec::new(),
+            queue_index: 0,
         }
     }
 }
