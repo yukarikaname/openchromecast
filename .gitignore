@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+/capture/
+*.pcap
+*.key
+*.pem
+!tests/fixtures/*.pem
+.DS_Store

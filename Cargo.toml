@@ -1,0 +1,35 @@
+[package]
+name = "openchromecast"
+version = "0.1.0"
+edition = "2024"
+description = "Chromecast (Google Cast) receiver emulator written in Rust — 'openchromecast'"
+license = "MIT"
+keywords = ["chromecast", "google-cast", "cast", "receiver", "streaming"]
+categories = ["multimedia::streaming"]
+
+[[bin]]
+name = "openchromecast"
+path = "src/main.rs"
+
+[[bin]]
+name = "cast-sniff"
+path = "src/bin/sniff.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+local-ip-address = "0.6"
+mdns-sd = "0.11"
+prost = "0.13"
+rcgen = "0.13"
+rsa = { version = "0.9", features = ["pem", "sha2", "getrandom"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+time = { version = "0.3", features = ["std"] }
+uuid = { version = "1", features = ["v4"] }
