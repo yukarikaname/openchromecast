@@ -92,6 +92,27 @@ if [[ -n "$SIGN_IDENTITY" && ( -n "$NOTARY_KEY_BASE64" || -n "$APPLE_ID" ) ]]; t
   ditto -x -k "$OUT" "$STAGE"
   if [[ -n "$NOTARY_KEY_BASE64" ]]; then
     echo "$NOTARY_KEY_BASE64" | base64 --decode > "$STAGE/AuthKey_$NOTARY_KEY_ID.p8"
+    # Self-check the notary credentials so a 401 can be traced to one field.
+    # (HTTP 401 from notarytool = the API-key auth was rejected.)
+    ok=1
+    if [[ -z "$NOTARY_KEY_ID" ]]; then
+      echo "!! NOTARY_KEY_ID is empty" >&2; ok=0
+    else
+      echo "   NOTARY_KEY_ID: ${#NOTARY_KEY_ID} chars, matches .p8 name: $([[ -f "$STAGE/AuthKey_$NOTARY_KEY_ID.p8" ]] && echo yes || echo no)"
+    fi
+    if [[ -z "$NOTARY_ISSUER_ID" ]]; then
+      echo "!! NOTARY_ISSUER_ID is empty" >&2; ok=0
+    elif [[ ! "$NOTARY_ISSUER_ID" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+      echo "!! NOTARY_ISSUER_ID does not look like a 36-char UUID: ${#NOTARY_ISSUER_ID} chars" >&2; ok=0
+    else
+      echo "   NOTARY_ISSUER_ID: 36-char UUID ok (ends ...${NOTARY_ISSUER_ID: -4})"
+    fi
+    if grep -q -- '-----BEGIN PRIVATE KEY-----' "$STAGE/AuthKey_$NOTARY_KEY_ID.p8"; then
+      echo "   AuthKey .p8: valid PEM private key"
+    else
+      echo "!! AuthKey .p8 is NOT a valid PEM private key (base64 content wrong?)" >&2; ok=0
+    fi
+    [[ "$ok" -eq 0 ]] && { echo ">> aborting: fix the flagged notary credential(s) above" >&2; exit 1; }
     xcrun notarytool submit "$OUT" \
       --key "$STAGE/AuthKey_$NOTARY_KEY_ID.p8" \
       --key-id "$NOTARY_KEY_ID" \
