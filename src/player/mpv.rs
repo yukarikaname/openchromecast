@@ -31,6 +31,9 @@ pub async fn spawn(bin: &str, ipc_path: &str) -> Result<PlayerHandle> {
     cmd.arg("--no-terminal")
         .arg("--idle=yes")
         .arg("--keep-open=yes")
+        // Only create a window when video is actually decoded: audio-only
+        // playback stays headless on every OS.
+        .arg("--force-window=no")
         .arg(format!("--input-ipc-server={ipc_path}"));
     #[cfg(windows)]
     {
@@ -69,6 +72,7 @@ pub async fn spawn(bin: &str, ipc_path: &str) -> Result<PlayerHandle> {
                 if n == 0 {
                     break;
                 }
+                tracing::trace!("mpv << {line:?}");
                 let Ok(v) = serde_json::from_str::<Value>(&line) else {
                     continue;
                 };
@@ -183,6 +187,7 @@ impl MpvConn {
 
         let mut line = serde_json::to_string(&value)?;
         line.push('\n');
+        tracing::trace!("mpv >> {line:?}");
         self.write.write_all(line.as_bytes()).await?;
         self.write.flush().await?;
 

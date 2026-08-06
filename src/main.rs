@@ -80,9 +80,10 @@ async fn main() -> Result<()> {
             }
         }
         _ => {
+            let mpv_path = resolve_mpv_path(&cli.mpv);
             let ipc = cli.ipc.clone().unwrap_or_else(default_ipc_path);
-            info!("spawning mpv player ({}), ipc {ipc}", cli.mpv);
-            match player::mpv::spawn(&cli.mpv, &ipc).await {
+            info!("spawning mpv player ({mpv_path}), ipc {ipc}");
+            match player::mpv::spawn(&mpv_path, &ipc).await {
                 Ok(p) => p,
                 Err(e) => {
                     warn!("mpv unavailable ({e:#}); falling back to null player");
@@ -125,6 +126,30 @@ fn default_ipc_path() -> String {
     {
         format!("/tmp/openchromecast-{}.sock", std::process::id())
     }
+}
+
+/// Resolve the mpv executable path: honor an explicit path (anything other
+/// than the bare `mpv` default), then auto-detect well-known install
+/// locations (e.g. the winget package dir), then fall back to PATH.
+fn resolve_mpv_path(explicit: &str) -> String {
+    if !explicit.is_empty() && explicit != "mpv" {
+        return explicit.to_string();
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(root) = std::env::var("LOCALAPPDATA") {
+            let packages = std::path::Path::new(&root).join(r"Microsoft\WinGet\Packages");
+            if let Ok(entries) = std::fs::read_dir(&packages) {
+                for entry in entries.flatten() {
+                    let candidate = entry.path().join("mpv.exe");
+                    if candidate.exists() {
+                        return candidate.to_string_lossy().to_string();
+                    }
+                }
+            }
+        }
+    }
+    "mpv".to_string()
 }
 
 /// Resolve the VLC executable path (explicit flag, else well-known locations).
