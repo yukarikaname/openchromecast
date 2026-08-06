@@ -95,7 +95,7 @@ if [[ -n "$SIGN_IDENTITY" && ( -n "$NOTARY_KEY_BASE64" || -n "$APPLE_ID" ) ]]; t
     xcrun notarytool submit "$OUT" \
       --key "$STAGE/AuthKey_$NOTARY_KEY_ID.p8" \
       --key-id "$NOTARY_KEY_ID" \
-      --issuer-id "$NOTARY_ISSUER_ID" \
+      --issuer "$NOTARY_ISSUER_ID" \
       --wait
   else
     xcrun notarytool submit "$OUT" \
