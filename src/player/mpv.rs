@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use std::process::Stdio;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{info, warn};
 
@@ -34,15 +35,50 @@ pub async fn spawn(bin: &str, ipc_path: &str) -> Result<PlayerHandle> {
         // Only create a window when video is actually decoded: audio-only
         // playback stays headless on every OS.
         .arg("--force-window=no")
-        .arg(format!("--input-ipc-server={ipc_path}"));
+        // Senders give us direct stream URLs; youtube-dl resolution is never
+        // wanted. With --ytdl enabled mpv runs a youtube-dl subprocess before
+        // EVERY load; when that subprocess fails to init (not installed /
+        // sandboxed), mpv aborts the whole load ("loading failed reason 4")
+        // instead of falling back to direct loading — causing intermittent
+        // "no audio" even for perfectly good LAN streams.
+        .arg("--ytdl=no")
+        .arg(format!("--input-ipc-server={ipc_path}"))
+        // Write mpv's own log to a file so decode/fetch failures are
+        // diagnosable (the Windows winget mpv.exe is a GUI-subsystem binary
+        // that writes nothing to stdout/stderr, so piping alone is useless
+        // there). The file is overwritten on each mpv launch.
+        .arg(format!(
+            "--log-file={}",
+            std::env::temp_dir().join("openchromecast-mpv.log").display()
+        ))
+        .arg("--msg-level=all=info");
     #[cfg(windows)]
     {
         // CREATE_NO_WINDOW: don't show a console window.
         cmd.creation_flags(0x0800_0000);
     }
+    // Capture mpv's stdout/stderr too (works on Unix; harmless on Windows).
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().with_context(|| {
         format!("failed to spawn mpv ({bin}); use --player none to run without a player")
     })?;
+
+    if let Some(out) = child.stdout.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(out).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                info!("mpv out: {line}");
+            }
+        });
+    }
+    if let Some(err) = child.stderr.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(err).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                info!("mpv err: {line}");
+            }
+        });
+    }
 
     let (read_half, write_half) = connect_ipc(ipc_path)
         .await

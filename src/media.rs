@@ -161,9 +161,34 @@ async fn handle_load(
         .unwrap_or(0.0) as f32;
 
     // Remember the media on the active session (echoed back in MEDIA_STATUS).
-    let session_id = {
+    // A re-cast of the SAME track is not a new queue entry (no duplicates).
+    // And if that same track is still loading/buffering, skip re-loading so a
+    // rapid re-cast can't restart (and thereby kill) playback before it starts.
+    let session_id;
+    let mut skip_load = false;
+    {
         let mut st = shared.state.lock().await;
-        st.session.as_mut().map(|s| {
+        let Some(s) = st.session.as_mut() else {
+            warn!("LOAD received but no session is running; ignoring");
+            return Ok(());
+        };
+        session_id = s.id.clone();
+        let already_this = s
+            .media
+            .as_ref()
+            .is_some_and(|m| m.content_id == content_id);
+        let starting = matches!(
+            shared.player.snapshot().await.state,
+            PlayerState::Loading | PlayerState::Buffering
+        );
+        if already_this {
+            // Re-cast of the current track: keep it the active item without
+            // appending a duplicate to the queue.
+            if let Some(pos) = s.queue.iter().position(|m| m.content_id == content_id) {
+                s.queue_index = pos;
+            }
+            skip_load = starting;
+        } else {
             let item = MediaInfo {
                 content_id: content_id.clone(),
                 content_type: content_type.clone(),
@@ -181,22 +206,16 @@ async fn handle_load(
                 s.queue.push(item);
                 s.queue_index = s.queue.len() - 1;
             }
-            s.id.clone()
-        })
-    };
-    let session_id = match session_id {
-        Some(id) => id,
-        None => {
-            warn!("LOAD received but no session is running; ignoring");
-            return Ok(());
         }
-    };
+    }
 
-    info!("LOAD contentId={content_id} type={content_type} autoplay={autoplay} t={current_time}");
-    shared
-        .player
-        .load(&content_id, current_time, autoplay)
-        .await?;
+    info!("LOAD contentId={content_id} type={content_type} autoplay={autoplay} t={current_time} skip_load={skip_load}");
+    if !skip_load {
+        shared
+            .player
+            .load(&content_id, current_time, autoplay)
+            .await?;
+    }
 
     respond_media_status(tx, msg, shared, rid, 0).await?;
 

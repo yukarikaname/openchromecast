@@ -12,7 +12,6 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 pub enum PlayerState {
     Idle,
     Loading,
-    #[allow(dead_code)] // reserved for future buffering-state reporting
     Buffering,
     Playing,
     Paused,
@@ -74,6 +73,16 @@ impl PlayerHandle {
     }
 
     pub async fn load(&self, url: &str, position: f32, autoplay: bool) -> Result<()> {
+        {
+            let mut s = self.snapshot.lock().await;
+            // Optimistically mark BUFFERING so the LOAD acknowledgement is not
+            // IDLE: senders like VLC retry LOAD in a loop (each retry restarting
+            // playback, which kills audio) when they see IDLE in the response.
+            if matches!(s.state, PlayerState::Idle | PlayerState::Ended) {
+                s.state = PlayerState::Buffering;
+                s.position = position;
+            }
+        }
         self.send(PlayerCommand::Load {
             url: url.to_string(),
             position,
