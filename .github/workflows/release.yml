@@ -41,6 +41,10 @@ jobs:
             target: aarch64-pc-windows-msvc
             pkg: zip
     runs-on: ${{ matrix.os }}
+    env:
+      # `secrets` is not allowed directly in `if:` conditions; expose the
+      # presence of the signing certificate through a job-level env flag.
+      MACOS_CERT_PRESENT: ${{ secrets.MACOS_CERT_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -83,7 +87,7 @@ jobs:
           tar -czf dist/${{ matrix.artifact }}.tar.gz -C dist/stage openchromecast
 
       - name: Import Apple Developer ID certificate (release signing)
-        if: matrix.pkg == 'app' && secrets.MACOS_CERT_BASE64 != ''
+        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true'
         env:
           MACOS_CERT_BASE64: ${{ secrets.MACOS_CERT_BASE64 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
