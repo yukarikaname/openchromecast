@@ -119,9 +119,11 @@ artifacts to a GitHub Release:
 
 | OS | Artifact |
 |----|----------|
-| Windows | `openchromecast-windows-x86_64.zip` (exe) |
-| macOS | `openchromecast-macos-x86_64.app.zip` (`.app` bundle, ad-hoc signed) |
-| Linux | `openchromecast-linux-x86_64.tar.gz` (binary) |
+| Windows x86_64 | `openchromecast-windows-x86_64.zip` (exe) |
+| Windows arm64 | `openchromecast-windows-arm64.zip` (exe) |
+| macOS arm64 (Apple Silicon) | `openchromecast-macos-arm64.app.zip` (`.app` bundle, ad-hoc signed) |
+| Linux x86_64 | `openchromecast-linux-x86_64.tar.gz` (binary) |
+| Linux arm64 | `openchromecast-linux-arm64.tar.gz` (binary) |
 
 To publish **v1.0.0**: tag and push:
 
