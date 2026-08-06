@@ -252,10 +252,13 @@ async fn run_command(conn: &mut MpvConn, cmd: PlayerCommand) -> Result<()> {
         } => {
             conn.send_cmd(json!({"command": ["loadfile", url, "replace"]}))
                 .await?;
-            if !autoplay {
-                conn.send_cmd(json!({"command": ["set_property", "pause", true]}))
-                    .await?;
-            }
+            // Explicitly set pause to the autoplay-opposite. mpv runs with
+            // --keep-open=yes, so when a previous track ended it is left
+            // PAUSED; a re-LOAD (repeat-one / next track) would otherwise load
+            // the new file while still paused and never advance (stuck at 0,
+            // no sound).
+            conn.send_cmd(json!({"command": ["set_property", "pause", !autoplay]}))
+                .await?;
             if position > 0.0 {
                 conn.send_cmd(json!({"command": ["seek", position, "absolute"]}))
                     .await?;

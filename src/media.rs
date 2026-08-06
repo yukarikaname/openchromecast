@@ -53,7 +53,25 @@ pub async fn handle(
             respond_media_status(tx, msg, shared, &rid, media_session_id).await
         }
         "STOP" => {
-            shared.player.stop().await?;
+            // VLC sends media STOP+LOAD bursts when a track starts/advances.
+            // Stopping mpv immediately aborts the just-issued loadfile opening
+            // ("Opening failed or was aborted") and kills audio. Debounce:
+            // only actually stop if no LOAD arrives shortly after.
+            let load_gen = {
+                let st = shared.state.lock().await;
+                st.media_load_generation
+            };
+            let shared2 = shared.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(800)).await;
+                let gen_now = {
+                    let st = shared2.state.lock().await;
+                    st.media_load_generation
+                };
+                if gen_now == load_gen {
+                    let _ = shared2.player.stop().await;
+                }
+            });
             respond_media_status_idle(tx, msg, shared, &rid).await
         }
         "GET_STATUS" => respond_media_status(tx, msg, shared, &rid, media_session_id).await,
@@ -162,12 +180,26 @@ async fn handle_load(
 
     // Remember the media on the active session (echoed back in MEDIA_STATUS).
     // A re-cast of the SAME track is not a new queue entry (no duplicates).
-    // And if that same track is still loading/buffering, skip re-loading so a
-    // rapid re-cast can't restart (and thereby kill) playback before it starts.
     let session_id;
-    let mut skip_load = false;
+    let skip_load;
     {
         let mut st = shared.state.lock().await;
+        // Bump the load counter: any LOAD following a media STOP cancels the
+        // debounced stop (VLC's STOP+LOAD burst must not halt playback).
+        st.media_load_generation = st.media_load_generation.wrapping_add(1);
+        // Absorb VLC's STOP+LOAD burst: ignore repeated LOADs of the SAME
+        // contentId that arrive within ~1.5s of the last one. The burst sends
+        // STOP+LOAD every ~30-60ms and, once the track is playing, each LOAD
+        // re-issues `loadfile replace`, killing the stream before audio is
+        // heard (mpv log: loadfile -> Opening done -> audio ready -> 26ms
+        // later another loadfile -> EOF -> "Stream ends prematurely at 0").
+        let now = std::time::Instant::now();
+        let burst_dup = st.last_load.as_ref().is_some_and(|(cid, at)| {
+            cid == &content_id && now.duration_since(*at) < Duration::from_millis(1500)
+        });
+        if !burst_dup {
+            st.last_load = Some((content_id.clone(), now));
+        }
         let Some(s) = st.session.as_mut() else {
             warn!("LOAD received but no session is running; ignoring");
             return Ok(());
@@ -177,6 +209,8 @@ async fn handle_load(
             .media
             .as_ref()
             .is_some_and(|m| m.content_id == content_id);
+        // Also dedupe while the same track is still starting up (loading/
+        // buffering) so the tail of the burst does not interrupt the opening.
         let starting = matches!(
             shared.player.snapshot().await.state,
             PlayerState::Loading | PlayerState::Buffering
@@ -187,7 +221,7 @@ async fn handle_load(
             if let Some(pos) = s.queue.iter().position(|m| m.content_id == content_id) {
                 s.queue_index = pos;
             }
-            skip_load = starting;
+            skip_load = starting || burst_dup;
         } else {
             let item = MediaInfo {
                 content_id: content_id.clone(),
@@ -206,6 +240,7 @@ async fn handle_load(
                 s.queue.push(item);
                 s.queue_index = s.queue.len() - 1;
             }
+            skip_load = burst_dup;
         }
     }
 
