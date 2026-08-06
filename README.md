@@ -110,6 +110,10 @@ StatusNotifier) whose menu provides:
   Linux autostart `.desktop`).
 - **Exit** — stops the receiver and quits.
 
+On Windows, **release builds show no console window** (GUI subsystem) — the app appears
+only in the tray. Debug builds keep a console; to capture logs from a release build,
+redirect output, e.g. `openchromecast.exe *> app.log`.
+
 Use `--no-tray` for headless/server use (CI, SSH, protocol testing).
 
 ## Release & packaging

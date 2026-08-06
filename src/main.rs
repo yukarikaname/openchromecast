@@ -3,6 +3,11 @@
 //! Pretends to be a Chromecast on the LAN so unmodified Cast senders
 //! (Android YouTube, Google Home, Chrome, ...) cast media to this PC.
 
+// On Windows, release builds use the GUI subsystem so no console window is
+// shown — the app lives in the system tray only. Debug builds keep a console
+// for development and CI, and `--no-tray` still works headless either way.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod config;
 mod crypto;
 mod mdns;
