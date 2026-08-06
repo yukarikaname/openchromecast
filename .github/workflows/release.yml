@@ -4,6 +4,14 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      # Off by default: releases are unsigned/ad-hoc for now. Turn this on
+      # (workflow_dispatch only) to sign + notarize the macOS .app again.
+      macos_signing:
+        description: "Sign & notarize the macOS app (Developer ID)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -87,7 +95,7 @@ jobs:
           tar -czf dist/${{ matrix.artifact }}.tar.gz -C dist/stage openchromecast
 
       - name: Import Apple Developer ID certificate (release signing)
-        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true'
+        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && inputs.macos_signing == 'true'
         env:
           MACOS_CERT_BASE64: ${{ secrets.MACOS_CERT_BASE64 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -106,7 +114,8 @@ jobs:
       - name: Package macOS (.app, signed, zipped)
         if: matrix.pkg == 'app'
         env:
-          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          # Empty unless macos_signing was enabled on a workflow_dispatch run.
+          SIGN_IDENTITY: ${{ inputs.macos_signing == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
           NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
