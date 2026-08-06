@@ -70,6 +70,7 @@ pub async fn handle(
                     _ => false,
                 }
             };
+            info!("QUEUE_NEXT received (moved={moved})");
             if moved {
                 play_queue_item(shared, true).await?;
             }
@@ -86,13 +87,36 @@ pub async fn handle(
                     _ => false,
                 }
             };
+            info!("QUEUE_PREV received (moved={moved})");
             if moved {
                 play_queue_item(shared, true).await?;
             }
             respond_media_status(tx, msg, shared, &rid, media_session_id).await
         }
         "QUEUE_UPDATE" => {
-            // Repeat/shuffle settings: acknowledged (no-op for now).
+            // Next/previous are sent as QUEUE_UPDATE with a `jump` offset by
+            // the Android Cast SDK / pychromecast (jump=1 next, jump=-1 prev).
+            // Repeat/shuffle settings are acknowledged and otherwise ignored.
+            let jump = payload.get("jump").and_then(|v| v.as_i64()).unwrap_or(0);
+            let moved = {
+                let mut st = shared.state.lock().await;
+                match st.session.as_mut() {
+                    Some(s) if !s.queue.is_empty() => {
+                        let target = s.queue_index as i64 + jump;
+                        if target >= 0 && (target as usize) < s.queue.len() {
+                            s.queue_index = target as usize;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            };
+            info!("QUEUE_UPDATE jump={jump} (moved={moved})");
+            if moved {
+                play_queue_item(shared, true).await?;
+            }
             respond_media_status(tx, msg, shared, &rid, media_session_id).await
         }
         other => {
@@ -146,9 +170,17 @@ async fn handle_load(
                 stream_type: stream_type.clone(),
             };
             s.media = Some(item.clone());
-            // A LOAD (re)starts the queue as a single item.
-            s.queue = vec![item];
-            s.queue_index = 0;
+            // Build a playlist from consecutive casts: the first LOAD starts
+            // the queue, later LOADs append so next/previous controls become
+            // enabled and PREVIOUS can navigate back through cast tracks.
+            // (A true full playlist still comes from QUEUE_LOAD/QUEUE_INSERT.)
+            if s.queue.is_empty() {
+                s.queue = vec![item];
+                s.queue_index = 0;
+            } else {
+                s.queue.push(item);
+                s.queue_index = s.queue.len() - 1;
+            }
             s.id.clone()
         })
     };

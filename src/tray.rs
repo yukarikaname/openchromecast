@@ -12,11 +12,13 @@ use crate::config::Cli;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Notify;
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use tracing::{error, info};
 use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::WindowId;
 
 const ID_START: &str = "start-with-system";
 const ID_EXIT: &str = "exit";
@@ -42,7 +44,7 @@ struct TrayApp {
     cli: Cli,
     shutdown: Arc<Notify>,
     tray: Option<TrayIcon>,
-    start_item: Option<MenuItem>,
+    start_item: Option<CheckMenuItem>,
     auto: Option<auto_launch::AutoLaunch>,
     started: bool,
     exit_requested: bool,
@@ -57,6 +59,14 @@ impl ApplicationHandler for TrayApp {
         if let Err(e) = self.setup() {
             error!("failed to start tray + receiver: {e:#}");
         }
+    }
+
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        _event: WindowEvent,
+    ) {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -78,10 +88,13 @@ impl TrayApp {
         // --- Menu ---
         let menu = Menu::new();
         let title = MenuItem::with_id("title", "OpenChromecast", false, None);
-        let start_item = MenuItem::with_id(ID_START, "Start with system", true, None);
-        if let Some(a) = &self.auto {
-            start_item.set_checked(a.is_enabled().unwrap_or(false));
-        }
+        let start_checked = self
+            .auto
+            .as_ref()
+            .map(|a| a.is_enabled().unwrap_or(false))
+            .unwrap_or(false);
+        let start_item =
+            CheckMenuItem::with_id(ID_START, "Start with system", true, start_checked, None);
         let exit_item = MenuItem::with_id(ID_EXIT, "Exit", true, None);
         menu.append_items(&[
             &title,
@@ -155,7 +168,7 @@ fn build_auto_launch() -> Option<auto_launch::AutoLaunch> {
         .collect();
     auto_launch::AutoLaunchBuilder::new()
         .set_app_name("OpenChromecast")
-        .set_app_path(exe.to_string_lossy().to_string())
+        .set_app_path(&exe.to_string_lossy())
         .set_args(&args)
         .build()
         .ok()

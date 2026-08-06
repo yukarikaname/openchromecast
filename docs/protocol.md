@@ -132,8 +132,13 @@ AuthResponse {
 
 This receiver advertises `15 | 64 | 128 = 207` (pause/seek/volume/mute + next/prev).
 
-## Command flow summary
+> Next/previous navigation is actually sent as `QUEUE_UPDATE { "jump": 1 }` /
+> `{ "jump": -1 }` by the Android Cast SDK / pychromecast (not
+> `QUEUE_NEXT`/`QUEUE_PREV`). A 1-item queue keeps the buttons gray even with
+> the capability bits set — a playlist (QUEUE_LOAD, or consecutive LOADs
+> accumulated by this receiver) is required.
 
+## Command flow summary
 ```
 Sender                        Receiver
 ------                        --------
