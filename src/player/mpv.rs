@@ -32,9 +32,12 @@ pub async fn spawn(bin: &str, ipc_path: &str) -> Result<PlayerHandle> {
     cmd.arg("--no-terminal")
         .arg("--idle=yes")
         .arg("--keep-open=yes")
-        // Only create a window when video is actually decoded: audio-only
-        // playback stays headless on every OS.
+        // No window at startup: video casts force one (fullscreen) at LOAD
+        // time via IPC, while audio-only playback stays headless. (mpv 0.41
+        // accepts only no/yes here — `auto` is rejected.)
         .arg("--force-window=no")
+        // Chromecast-like fullscreen playback: no on-screen controller.
+        .arg("--osc=no")
         // Senders give us direct stream URLs; youtube-dl resolution is never
         // wanted. With --ytdl enabled mpv runs a youtube-dl subprocess before
         // EVERY load; when that subprocess fails to init (not installed /
@@ -249,7 +252,14 @@ async fn run_command(conn: &mut MpvConn, cmd: PlayerCommand) -> Result<()> {
             url,
             position,
             autoplay,
+            video,
         } => {
+            // Show (or hide) the video window based on content type: video
+            // casts play fullscreen (Chromecast-like), audio stays headless.
+            conn.send_cmd(json!({"command": ["set_property", "force-window", if video {"yes"} else {"no"}]}))
+                .await?;
+            conn.send_cmd(json!({"command": ["set_property", "fullscreen", video]}))
+                .await?;
             conn.send_cmd(json!({"command": ["loadfile", url, "replace"]}))
                 .await?;
             // Explicitly set pause to the autoplay-opposite. mpv runs with
@@ -277,6 +287,11 @@ async fn run_command(conn: &mut MpvConn, cmd: PlayerCommand) -> Result<()> {
                 .await?;
         }
         PlayerCommand::Stop => {
+            // Hide any video window and leave fullscreen.
+            conn.send_cmd(json!({"command": ["set_property", "force-window", "no"]}))
+                .await?;
+            conn.send_cmd(json!({"command": ["set_property", "fullscreen", false]}))
+                .await?;
             conn.send_cmd(json!({"command": ["stop"]})).await?;
         }
         PlayerCommand::SetVolume(level) => {

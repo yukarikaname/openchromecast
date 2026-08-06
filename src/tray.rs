@@ -106,11 +106,15 @@ impl TrayApp {
         self.start_item = Some(start_item);
 
         // --- Tray icon ---
-        let tray = TrayIconBuilder::new()
+        let builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("OpenChromecast")
-            .with_icon(make_icon())
-            .build()?;
+            .with_icon(make_icon());
+        // macOS menu-bar icons are monochrome templates; the system recolours
+        // them to match the menu bar (light/dark).
+        #[cfg(target_os = "macos")]
+        let builder = builder.with_icon_as_template(true);
+        let tray = builder.build()?;
         self.tray = Some(tray);
 
         // --- Receiver on a background tokio runtime ---
@@ -174,20 +178,20 @@ fn build_auto_launch() -> Option<auto_launch::AutoLaunch> {
         .ok()
 }
 
-/// A simple 64x64 blue "cast" dot used as the tray icon.
-fn make_icon() -> Icon {
-    const SIZE: u32 = 64;
-    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
-    let cx = SIZE as f32 / 2.0;
-    let cy = SIZE as f32 / 2.0;
-    let r = 27.0;
-    let inner = 16.0;
-    for y in 0..SIZE {
-        for x in 0..SIZE {
+/// The colorful "cast dot": a blue circle with a punched white ring. Used as
+/// the Windows/Linux tray icon and as the packaged `.app` icon.
+pub fn cast_icon_rgba(size: u32) -> Vec<u8> {
+    let mut rgba = vec![0u8; (size * size * 4) as usize];
+    let cx = size as f32 / 2.0;
+    let cy = size as f32 / 2.0;
+    let r = size as f32 * 0.42;
+    let inner = size as f32 * 0.25;
+    for y in 0..size {
+        for x in 0..size {
             let dx = x as f32 - cx;
             let dy = y as f32 - cy;
             let dist = (dx * dx + dy * dy).sqrt();
-            let idx = ((y * SIZE + x) * 4) as usize;
+            let idx = ((y * size + x) * 4) as usize;
             if dist <= r {
                 // Outer filled circle; punch a white inner ring for contrast.
                 rgba[idx] = 0x42;
@@ -206,5 +210,68 @@ fn make_icon() -> Icon {
             }
         }
     }
-    Icon::from_rgba(rgba, SIZE, SIZE).expect("valid RGBA icon")
+    rgba
+}
+
+/// macOS menu-bar icons must be monochrome "template" images (black + alpha);
+/// the system recolours them for light/dark menu bars. Just a black disc.
+#[cfg(target_os = "macos")]
+fn macos_template_rgba(size: u32) -> Vec<u8> {
+    let mut rgba = vec![0u8; (size * size * 4) as usize];
+    let cx = size as f32 / 2.0;
+    let cy = size as f32 / 2.0;
+    let r = size as f32 * 0.40;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= r {
+                let idx = ((y * size + x) * 4) as usize;
+                rgba[idx] = 0;
+                rgba[idx + 1] = 0;
+                rgba[idx + 2] = 0;
+                rgba[idx + 3] = 255;
+            }
+        }
+    }
+    rgba
+}
+
+fn make_icon() -> Icon {
+    #[cfg(target_os = "macos")]
+    let rgba = macos_template_rgba(64);
+    #[cfg(not(target_os = "macos"))]
+    let rgba = cast_icon_rgba(64);
+    Icon::from_rgba(rgba, 64, 64).expect("valid RGBA icon")
+}
+
+/// Packaging helper: render the app icon to a 1024px PNG file.
+pub fn write_icon_png(path: &std::path::Path) -> Result<()> {
+    const SIZE: u32 = 1024;
+    let rgba = cast_icon_rgba(SIZE);
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut encoder = png::Encoder::new(file, SIZE, SIZE);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&rgba)?;
+    Ok(())
+}
+
+/// Packaging helper: write a multi-size `.ico` of the app icon (used as the
+/// Windows executable's embedded icon resource, via `build.rs`/`winres`).
+pub fn write_icon_ico(path: &std::path::Path) -> Result<()> {
+    use ico::{IconDir, IconDirEntry, IconImage, ResourceType};
+    let mut dir = IconDir::new(ResourceType::Icon);
+    for size in [16u32, 24, 32, 48, 64, 128, 256] {
+        let rgba = cast_icon_rgba(size);
+        let img = IconImage::from_rgba_data(size, size, rgba);
+        // encode() derives the entry size from the image (256 -> 0 on write).
+        let entry = IconDirEntry::encode(&img)?;
+        dir.add_entry(entry);
+    }
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    dir.write(file)?;
+    Ok(())
 }

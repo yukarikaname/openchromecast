@@ -248,7 +248,12 @@ async fn handle_load(
     if !skip_load {
         shared
             .player
-            .load(&content_id, current_time, autoplay)
+            .load(
+                &content_id,
+                current_time,
+                autoplay,
+                content_type.starts_with("video"),
+            )
             .await?;
     }
 
@@ -443,7 +448,10 @@ async fn play_queue_item(shared: &Shared, autoplay: bool) -> Result<()> {
         item
     };
     info!("queue: now playing {} ({})", item.content_id, item.content_type);
-    shared.player.load(&item.content_id, 0.0, autoplay).await?;
+    shared
+        .player
+        .load(&item.content_id, 0.0, autoplay, item.content_type.starts_with("video"))
+        .await?;
     Ok(())
 }
 

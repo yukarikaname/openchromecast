@@ -26,6 +26,11 @@
 
 set -euo pipefail
 
+# Temp dirs created during packaging; removed on exit.
+TMPDIRS=()
+cleanup() { for d in "${TMPDIRS[@]}"; do rm -rf "$d"; done; }
+trap cleanup EXIT
+
 APP="OpenChromecast.app"
 # Apple Silicon release build; override with BIN=<path> if needed.
 BIN="${BIN:-target/aarch64-apple-darwin/release/openchromecast}"
@@ -62,15 +67,38 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key>      <string>io.openchromecast.app</string>
   <key>CFBundleVersion</key>         <string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+  <key>CFBundleIconFile</key>        <string>AppIcon</string>
   <key>CFBundleExecutable</key>      <string>openchromecast</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>LSMinimumSystemVersion</key>  <string>10.15</string>
   <key>LSUIElement</key>             <true/>
   <key>NSHighResolutionCapable</key> <true/>
   <key>NSHumanReadableCopyright</key><string>MIT License</string>
+  <!-- macOS 15 local-network privacy: without this the .app is silently
+       blocked from mDNS, so Cast senders cannot discover it. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>OpenChromecast advertises itself on your local network so Cast senders (Android VLC, YouTube, ...) can discover and stream to it.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_googlecast._tcp</string>
+  </array>
 </dict>
 </plist>
 PLIST
+
+# Generate the .app icon from the same cast-dot the tray draws, then bundle it
+# as AppIcon.icns (must happen before signing so the code signature covers it).
+ICON_DIR="$(mktemp -d)"
+TMPDIRS+=("$ICON_DIR")
+"$BIN" --dump-icon "$ICON_DIR/icon-1024.png"
+mkdir -p "$ICON_DIR/AppIcon.iconset"
+for s in 16 32 128 256 512; do
+  sips -z "$s" "$s" "$ICON_DIR/icon-1024.png" --out "$ICON_DIR/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
+  d=$((s * 2))
+  sips -z "$d" "$d" "$ICON_DIR/icon-1024.png" --out "$ICON_DIR/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICON_DIR/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
+echo ">> app icon -> Contents/Resources/AppIcon.icns"
 
 if [[ -n "$SIGN_IDENTITY" ]]; then
   echo ">> signing with '$SIGN_IDENTITY' (hardened runtime)"
@@ -88,7 +116,7 @@ ditto -c -k --keepParent "$APP" "$OUT"
 if [[ -n "$SIGN_IDENTITY" && ( -n "$NOTARY_KEY_BASE64" || -n "$APPLE_ID" ) ]]; then
   echo ">> notarizing..."
   STAGE="$(mktemp -d)"
-  trap 'rm -rf "$STAGE"' EXIT
+  TMPDIRS+=("$STAGE")
   ditto -x -k "$OUT" "$STAGE"
   if [[ -n "$NOTARY_KEY_BASE64" ]]; then
     echo "$NOTARY_KEY_BASE64" | base64 --decode > "$STAGE/AuthKey_$NOTARY_KEY_ID.p8"

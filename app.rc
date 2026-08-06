@@ -1,0 +1,3 @@
+// Windows resource script: embeds the app icon into the .exe so Explorer and
+// the taskbar show the OpenChromecast cast-dot icon.
+1 ICON "assets/icon.ico"

@@ -46,6 +46,8 @@ pub enum PlayerCommand {
         url: String,
         position: f32,
         autoplay: bool,
+        /// `true` when the cast media has a video track (drives the video window).
+        video: bool,
     },
     Play,
     Pause,
@@ -72,7 +74,7 @@ impl PlayerHandle {
         Self { tx, snapshot }
     }
 
-    pub async fn load(&self, url: &str, position: f32, autoplay: bool) -> Result<()> {
+    pub async fn load(&self, url: &str, position: f32, autoplay: bool, video: bool) -> Result<()> {
         {
             let mut s = self.snapshot.lock().await;
             // Optimistically mark BUFFERING so the LOAD acknowledgement is not
@@ -87,6 +89,7 @@ impl PlayerHandle {
             url: url.to_string(),
             position,
             autoplay,
+            video,
         })
         .await
     }

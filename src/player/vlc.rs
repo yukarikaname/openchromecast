@@ -172,6 +172,7 @@ async fn run_command(conn: &mut RcConn, cmd: PlayerCommand) -> Result<()> {
             url,
             position,
             autoplay,
+            video: _,
         } => {
             conn.send("clear").await?;
             conn.send(&format!("add {url}")).await?;

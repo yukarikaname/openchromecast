@@ -19,7 +19,9 @@ path = "src/bin/sniff.rs"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 local-ip-address = "0.6"
+ico = "0.3"
 mdns-sd = "0.11"
+png = "0.17"
 prost = "0.13"
 rcgen = "0.13"
 rsa = { version = "0.9", features = ["pem", "sha2", "getrandom"] }
@@ -36,3 +38,8 @@ tray-icon = "0.19"
 time = { version = "0.3", features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
 winit = "0.30"
+
+[build-dependencies]
+# Embeds assets/icon.ico into the Windows executable (taskbar/Explorer icon).
+# Locates rc.exe via vswhere (more reliable than winres on bare rustup+VS).
+embed-resource = "2"

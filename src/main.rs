@@ -30,6 +30,16 @@ use tracing_subscriber::EnvFilter;
 fn main() -> Result<()> {
     let cli = config::parse();
     init_tracing(&cli);
+    if let Some(path) = &cli.dump_icon {
+        // Packaging helper: render the app icon to a PNG and exit (no GUI).
+        crate::tray::write_icon_png(path)?;
+        return Ok(());
+    }
+    if let Some(path) = &cli.dump_icon_ico {
+        // Packaging helper: render the app icon as a multi-size .ico and exit.
+        crate::tray::write_icon_ico(path)?;
+        return Ok(());
+    }
     if cli.no_tray {
         // Headless / server mode (CI, SSH, `--player none` testing).
         let rt = tokio::runtime::Runtime::new()?;

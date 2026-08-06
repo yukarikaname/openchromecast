@@ -62,6 +62,14 @@ pub struct Cli {
     #[arg(long)]
     pub no_tray: bool,
 
+    /// Write the generated app icon as a PNG to PATH and exit (packaging helper).
+    #[arg(long, value_name = "PATH")]
+    pub dump_icon: Option<PathBuf>,
+
+    /// Write the generated app icon as a multi-size .ico to PATH and exit (packaging helper).
+    #[arg(long, value_name = "PATH")]
+    pub dump_icon_ico: Option<PathBuf>,
+
     /// Increase log verbosity (-v, -vv).
     #[arg(short, action = clap::ArgAction::Count)]
     pub verbose: u8,
