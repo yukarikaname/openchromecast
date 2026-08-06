@@ -40,12 +40,44 @@ fn main() -> Result<()> {
         crate::tray::write_icon_ico(path)?;
         return Ok(());
     }
+
+    // Single-instance guard (after the packaging helpers so they always run).
+    let _lock = match acquire_single_instance_lock() {
+        Some(f) => f,
+        None => return Ok(()),
+    };
+
     if cli.no_tray {
         // Headless / server mode (CI, SSH, `--player none` testing).
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(run_receiver(cli, Arc::new(Notify::new())))
     } else {
         tray::run(cli)
+    }
+}
+
+/// Prevent multiple receiver instances from running at the same time.
+///
+/// An exclusive advisory lock is taken on a well-known file in the system
+/// temp dir. A second instance cannot acquire it and exits. The OS releases
+/// the lock automatically when the process dies, so a stale lock file left
+/// behind by a crash does not block future launches.
+fn acquire_single_instance_lock() -> Option<std::fs::File> {
+    use fs4::fs_std::FileExt;
+
+    let path = std::env::temp_dir().join("openchromecast.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .ok()?;
+    match file.try_lock_exclusive() {
+        // A second instance just exits quietly (no popup). The OS releases the
+        // lock automatically when the process dies, so a stale lock file left
+        // by a crash never blocks a later launch.
+        Ok(()) => Some(file),
+        Err(_) => None,
     }
 }
 
