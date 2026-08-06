@@ -100,6 +100,16 @@ async fn handle_connection(tcp: TcpStream, peer: SocketAddr, shared: Shared) -> 
             && payload.get("type").and_then(|v| v.as_str()) == Some("CONNECT")
         {
             transport = Some(msg.destination_id.clone());
+            // Count live connections bound to the active session. A sender
+            // (e.g. VLC) re-opens its transport with the same session id when
+            // auto-advancing to the next track — without this the moment the
+            // old transport closes we'd tear down playback of the new track.
+            if let Some(dest) = &transport {
+                let mut st = shared.state.lock().await;
+                if st.session.as_ref().is_some_and(|s| s.id == *dest) {
+                    *st.session_connections.entry(dest.clone()).or_insert(0) += 1;
+                }
+            }
         }
         if let Err(err) = dispatch(&msg, &tx, &shared).await {
             warn!("dispatch error on {peer}: {err:#}");
@@ -109,21 +119,34 @@ async fn handle_connection(tcp: TcpStream, peer: SocketAddr, shared: Shared) -> 
     drop(tx);
     let _ = writer.await;
 
-    // The sender that owned the active session left (e.g. the user switched
-    // the cast target back to the phone). Stop playback so it does not keep
-    // running silently on this device.
-    let owned_session = {
-        let st = shared.state.lock().await;
-        match (&st.session, &transport) {
-            (Some(s), Some(t)) => s.id == *t,
-            _ => false,
-        }
-    };
-    if owned_session {
-        info!("session owner disconnected; stopping playback");
-        let _ = shared.player.stop().await;
+    // Drop this connection's claim on the session it was bound to. Only stop
+    // playback when the LAST connection to the session is gone: senders (VLC
+    // auto-advance) re-open a new transport with the same session id before
+    // closing the old one, so a single transport close must not kill playback.
+    let teardown = {
         let mut st = shared.state.lock().await;
-        st.session = None;
+        let mut do_teardown = false;
+        if let Some(t) = &transport {
+            if let Some(n) = st.session_connections.get_mut(t) {
+                *n = n.saturating_sub(1);
+            }
+            if st.session_connections.get(t).copied().unwrap_or(0) == 0 {
+                st.session_connections.remove(t);
+            }
+            if st.session.as_ref().is_some_and(|s| s.id == *t)
+                && st.session_connections.get(t).copied().unwrap_or(0) == 0
+            {
+                do_teardown = true;
+            }
+        }
+        if do_teardown {
+            st.session = None;
+        }
+        do_teardown
+    };
+    if teardown {
+        info!("session no longer has any connections; stopping playback");
+        let _ = shared.player.stop().await;
     }
 
     info!("connection {peer} closed");

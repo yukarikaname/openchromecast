@@ -63,6 +63,8 @@ pub async fn handle(
                 let mut st = shared.state.lock().await;
                 st.media_session_counter += 1;
                 let session = Session::new(app_id.clone(), st.media_session_counter);
+                // A fresh session starts with no bound connections.
+                st.session_connections.clear();
                 st.session = Some(session.clone());
                 session
             };
@@ -83,6 +85,7 @@ pub async fn handle(
             let _ = shared.player.stop().await;
             let mut st = shared.state.lock().await;
             st.session = None;
+            st.session_connections.clear();
             drop(st);
             let st = shared.state.lock().await;
             let status = receiver_status(&st);
