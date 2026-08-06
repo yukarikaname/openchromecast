@@ -60,12 +60,14 @@ verified end-to-end with `pychromecast`.
 
 Key design points:
 
-- `src/crypto.rs` — ECDSA P-256 signing key + X.509 certificate; used both for TLS and for the
-  Cast device-auth signature.
+- `src/crypto.rs` — RSA 2048 signing key + short-lived TLS certificate; used both for TLS and for
+  the Cast device-auth signature (RSASSA-PKCS#1 v1.5 over `sender_nonce || peer_cert_der`).
 - `src/server.rs` — rustls TLS server, 4-byte-length-prefixed protobuf framing, namespace
   dispatch, and a writer/reader task split so background tasks can push live updates.
 - `src/receiver.rs` / `src/media.rs` / `src/youtube.rs` — the Cast V2 namespace handlers.
-- `src/player/` — a small actor that drives mpv over JSON IPC and publishes a status snapshot.
+- `src/player/` — a small actor that drives mpv / VLC over JSON IPC and publishes a status snapshot.
+- `src/tray.rs` — system tray icon (Windows taskbar / macOS menu bar / Linux) with
+  **Start with system** and **Exit**; the receiver runs on a background tokio runtime.
 
 ## Build
 
@@ -89,14 +91,48 @@ Common options:
 |-------------------|-----------------------------------------------------|
 | `--friendly-name` | name shown in the cast picker (mDNS `fn`)           |
 | `--model`         | advertised model, e.g. `Chromecast Ultra` (mDNS `md`) |
-| `--device-id`     | advertised device id (mDNS `id`, 16 hex chars)      |
+| `--device-id`     | advertised device id (mDNS `id`, full 128-bit UUID) |
 | `--port`          | Cast V2 TLS port (default 8009)                     |
-| `--player none`   | disable playback                                    |
-| `--mpv <path>`    | mpv executable                                      |
+| `--player`        | `mpv` (default), `vlc`, or `none`                   |
+| `--mpv <path>` / `--vlc <path>` | player executable (auto-detected) |
 | `--cert`/`--key`  | real device credentials (PEM)                       |
+| `--no-tray`       | headless mode (no system tray icon)                 |
 | `-v` / `-vv`      | more logging                                        |
 
 `RUST_LOG=debug openchromecast` also enables verbose logging.
+
+## System tray
+
+By default the app runs with a tray icon (Windows taskbar / macOS menu bar / Linux
+StatusNotifier) whose menu provides:
+
+- **Start with system** — toggles launch-at-login (Windows registry / macOS login item /
+  Linux autostart `.desktop`).
+- **Exit** — stops the receiver and quits.
+
+Use `--no-tray` for headless/server use (CI, SSH, protocol testing).
+
+## Release & packaging
+
+CI builds and packages `v*` tags via `.github/workflows/release.yml` and uploads the
+artifacts to a GitHub Release:
+
+| OS | Artifact |
+|----|----------|
+| Windows | `openchromecast-windows-x86_64.zip` (exe) |
+| macOS | `openchromecast-macos-x86_64.app.zip` (`.app` bundle, ad-hoc signed) |
+| Linux | `openchromecast-linux-x86_64.tar.gz` (binary) |
+
+To publish **v1.0.0**: tag and push:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The macOS `.app` is ad-hoc signed (`codesign -s -`, see `scripts/package-macos.sh`). For
+notarized public distribution, set an Apple Developer ID certificate in the CI secrets and
+adjust the script (see the note inside it).
 
 ## Reverse engineering & testing with ADB
 
