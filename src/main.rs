@@ -281,38 +281,59 @@ fn bundled_mpv_path() -> Option<String> {
 /// the user clicks Allow.
 #[cfg(target_os = "macos")]
 fn probe_local_network() {
-    std::thread::spawn(|| {
-        use std::net::{IpAddr, Ipv4Addr, TcpStream, UdpSocket};
-        use std::time::Duration;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
+    use std::time::Duration;
 
-        let mut local: Option<Ipv4Addr> = None;
-        for (_name, ip) in local_ip_address::list_afinet_netifas().unwrap_or_default() {
-            if let IpAddr::V4(v4) = ip {
-                if v4.is_private() {
-                    local = Some(v4);
-                    break;
+    let mut local: Option<Ipv4Addr> = None;
+    for (_name, ip) in local_ip_address::list_afinet_netifas().unwrap_or_default() {
+        if let IpAddr::V4(v4) = ip {
+            if v4.is_private() {
+                local = Some(v4);
+                break;
+            }
+        }
+    }
+    let Some(local) = local else { return };
+    let o = local.octets();
+    // Gateway is usually x.x.x.1 on home networks.
+    let gw = Ipv4Addr::new(o[0], o[1], o[2], 1);
+    let bcast = Ipv4Addr::new(o[0], o[1], o[2], 255);
+    let log_path = std::env::temp_dir().join("openchromecast-probe.log");
+
+    std::thread::spawn(move || {
+        use std::io::Write;
+        let log = |msg: &str| {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let _ = writeln!(f, "[{:?}] {msg}", std::time::Instant::now());
+            }
+        };
+        log(&format!("local={local} gw={gw} bcast={bcast}"));
+        // Retry a few times: TCC may only prompt after a couple of attempts.
+        for attempt in 1..=5 {
+            log(&format!("attempt {attempt}"));
+            // 1) TCP connect to live local hosts — a *successful* unicast
+            //    connection to a LAN device is what trips the TCC prompt.
+            for port in [80u16, 443, 22, 8080, 8009] {
+                let addr = SocketAddr::new(IpAddr::V4(gw), port);
+                match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
+                    Ok(_) => log(&format!("tcp {gw}:{port} OK")),
+                    Err(e) => log(&format!("tcp {gw}:{port} {e}")),
                 }
             }
-        }
-        let Some(local) = local else { return };
-        let o = local.octets();
-        // Gateway is usually x.x.x.1 on home networks; port 9 = discard.
-        let targets = [
-            format!("{}.{}.{}.1:9", o[0], o[1], o[2]),
-            format!("{local}:9"),
-        ];
-        for t in targets {
-            if let Ok(addr) = t.parse() {
-                let _ = TcpStream::connect_timeout(&addr, Duration::from_millis(600));
+            // 2) UDP datagrams to the gateway and the broadcast address.
+            if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+                let _ = sock.set_broadcast(true);
+                for port in [5353u16, 9, 123, 53, 8009] {
+                    let _ = sock.send_to(b"openchromecast-local-network-probe", (gw, port));
+                    let _ = sock.send_to(b"openchromecast-local-network-probe", (bcast, port));
+                }
+                log("udp sent");
             }
-        }
-        // A UDP broadcast is also a local-network operation.
-        if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
-            let _ = sock.set_broadcast(true);
-            let _ = sock.send_to(
-                b"openchromecast-local-network-probe",
-                format!("{}.{}.{}.255:9", o[0], o[1], o[2]),
-            );
+            std::thread::sleep(Duration::from_secs(3));
         }
     });
 }
