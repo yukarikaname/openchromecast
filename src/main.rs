@@ -274,68 +274,91 @@ fn bundled_mpv_path() -> Option<String> {
 
 /// Best-effort unicast probe of the local network, run on a background thread.
 ///
-/// macOS 15+ only prompts for the Local Network permission on a *unicast*
-/// local-network operation; pure multicast mDNS never triggers the prompt and
-/// is silently blocked instead. Probing the gateway/broadcast makes the
-/// permission dialog appear on first run so discovery (mDNS) can work after
-/// the user clicks Allow.
+/// macOS 15+ only prompts for the Local Network permission when the app
+/// performs a *local network operation*; pure multicast mDNS alone is silently
+/// blocked instead of prompting. Apple's recommended way to surface the alert
+/// (TN3179 "Trigger the local network alert") is to `connect()` a UDP socket
+/// to a local network address — this triggers the alert without generating any
+/// traffic. We do that for randomized fe80:: link-local addresses (as Apple's
+/// sample does) plus the IPv4 gateway, a few times at startup, so the prompt
+/// appears on first run and discovery (mDNS) works after the user clicks Allow.
 #[cfg(target_os = "macos")]
 fn probe_local_network() {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpStream, UdpSocket};
     use std::time::Duration;
 
-    let mut local: Option<Ipv4Addr> = None;
-    for (_name, ip) in local_ip_address::list_afinet_netifas().unwrap_or_default() {
-        if let IpAddr::V4(v4) = ip {
-            if v4.is_private() {
-                local = Some(v4);
-                break;
+    let mut v6_linklocal: Vec<(Ipv6Addr, u32)> = Vec::new();
+    let mut v4_local: Vec<Ipv4Addr> = Vec::new();
+    for (name, ip) in local_ip_address::list_afinet_netifas().unwrap_or_default() {
+        match ip {
+            IpAddr::V6(v6) if (v6.segments()[0] & 0xffc0) == 0xfe80 => {
+                // Link-local IPv6. Grab the interface index for the scope id.
+                let scope = unsafe { libc::if_nametoindex(cstr(&name)) };
+                if scope != 0 {
+                    // Randomize the 64-bit host part, like Apple's sample.
+                    let mut oct = v6.octets();
+                    for slot in oct[8..16].iter_mut() {
+                        *slot = rand_byte();
+                    }
+                    v6_linklocal.push((Ipv6Addr::from(oct), scope));
+                }
             }
+            IpAddr::V4(v4) if v4.is_private() => {
+                let o = v4.octets();
+                v4_local.push(v4);
+                v4_local.push(Ipv4Addr::new(o[0], o[1], o[2], 1)); // gateway
+                v4_local.push(Ipv4Addr::new(o[0], o[1], o[2], 255)); // broadcast
+            }
+            _ => {}
         }
     }
-    let Some(local) = local else { return };
-    let o = local.octets();
-    // Gateway is usually x.x.x.1 on home networks.
-    let gw = Ipv4Addr::new(o[0], o[1], o[2], 1);
-    let bcast = Ipv4Addr::new(o[0], o[1], o[2], 255);
-    let log_path = std::env::temp_dir().join("openchromecast-probe.log");
+    if v6_linklocal.is_empty() && v4_local.is_empty() {
+        return;
+    }
 
     std::thread::spawn(move || {
-        use std::io::Write;
-        let log = |msg: &str| {
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-            {
-                let _ = writeln!(f, "[{:?}] {msg}", std::time::Instant::now());
+        for _attempt in 0..5 {
+            // Apple-endorsed: UDP connect() to a local address => prompt, no traffic.
+            for (addr, scope) in &v6_linklocal {
+                let sa = SocketAddr::V6(SocketAddrV6::new(*addr, 9, 0, *scope));
+                let _ = UdpSocket::bind("[::]:0").and_then(|s| s.connect(sa));
             }
-        };
-        log(&format!("local={local} gw={gw} bcast={bcast}"));
-        // Retry a few times: TCC may only prompt after a couple of attempts.
-        for attempt in 1..=5 {
-            log(&format!("attempt {attempt}"));
-            // 1) TCP connect to live local hosts — a *successful* unicast
-            //    connection to a LAN device is what trips the TCC prompt.
-            for port in [80u16, 443, 22, 8080, 8009] {
-                let addr = SocketAddr::new(IpAddr::V4(gw), port);
-                match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
-                    Ok(_) => log(&format!("tcp {gw}:{port} OK")),
-                    Err(e) => log(&format!("tcp {gw}:{port} {e}")),
-                }
+            for ip in &v4_local {
+                let sa = SocketAddr::new(IpAddr::V4(*ip), 9);
+                let _ = UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect(sa));
+                // Secondary: a real TCP connect also counts as a local operation.
+                let _ = TcpStream::connect_timeout(&sa, Duration::from_millis(400));
             }
-            // 2) UDP datagrams to the gateway and the broadcast address.
-            if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
-                let _ = sock.set_broadcast(true);
-                for port in [5353u16, 9, 123, 53, 8009] {
-                    let _ = sock.send_to(b"openchromecast-local-network-probe", (gw, port));
-                    let _ = sock.send_to(b"openchromecast-local-network-probe", (bcast, port));
-                }
-                log("udp sent");
-            }
-            std::thread::sleep(Duration::from_secs(3));
+            std::thread::sleep(Duration::from_millis(800));
         }
     });
+}
+
+/// C string helper for `if_nametoindex` without allocating a CString each time.
+#[cfg(target_os = "macos")]
+fn cstr(s: &str) -> std::ffi::CString {
+    std::ffi::CString::new(s).unwrap_or_default()
+}
+
+/// Cheap non-crypto random byte (xorshift seeded once) — enough for a random
+/// link-local host part; avoids pulling in the `rand` crate.
+#[cfg(target_os = "macos")]
+fn rand_byte() -> u8 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static STATE: AtomicU64 = AtomicU64::new(0);
+    let mut x = STATE.load(Ordering::Relaxed);
+    if x == 0 {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9e3779b97f4a7c15);
+        x = seed ^ 0x9e3779b97f4a7c15;
+    }
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    STATE.store(x, Ordering::Relaxed);
+    (x >> 56) as u8
 }
 
 /// Resolve the VLC executable path (explicit flag, else well-known locations).
