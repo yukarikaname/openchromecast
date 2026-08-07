@@ -115,16 +115,15 @@ jobs:
         if: matrix.pkg == 'app'
         run: |
           # Make a portable mpv so macOS users do not install it. Best-effort:
-          # if this fails, the .app ships without mpv and falls back to a
-          # system mpv (MPV_BUNDLE_DIR is read by package-macos.sh).
+          # if bundling fails the step warns but the release continues and the
+          # .app falls back to a system mpv (MPV_BUNDLE_DIR is read by
+          # package-macos.sh). Run locally with:
+          #   bash scripts/bundle-mpv-macos.sh /opt/homebrew/bin/mpv /tmp/mpv
           set -euo pipefail
           brew install mpv dylibbundler >/dev/null 2>&1 || true
-          mkdir -p "$RUNNER_TEMP/mpv/bin"
-          cp "$(command -v mpv)" "$RUNNER_TEMP/mpv/bin/mpv"
-          if command -v dylibbundler >/dev/null 2>&1; then
-            dylibbundler -b -x "$RUNNER_TEMP/mpv/bin/mpv" -d "$RUNNER_TEMP/mpv/lib" -p @executable_path/../lib -of || true
-          fi
-          echo "MPV_BUNDLE_DIR=$RUNNER_TEMP/mpv" >> "$GITHUB_ENV"
+          bash scripts/bundle-mpv-macos.sh "$(command -v mpv)" "$RUNNER_TEMP/mpv" \
+            && echo "MPV_BUNDLE_DIR=$RUNNER_TEMP/mpv" >> "$GITHUB_ENV" \
+            || echo "!! mpv bundling failed; .app will rely on a system mpv"
 
       - name: Package macOS (.app, signed, zipped)
         if: matrix.pkg == 'app'
