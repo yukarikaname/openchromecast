@@ -136,6 +136,16 @@ artifacts to a GitHub Release:
 > License note: the bundled `mpv` is GPL-licensed and ships as a separate
 > component with its own license in the archive (the app itself stays MIT).
 
+**macOS first run** (builds are ad-hoc signed / not notarized yet): after
+downloading the `.app.zip`, macOS Gatekeeper quarantines it, so first clear the
+quarantine flag, then open and allow the local-network prompt:
+
+```bash
+xattr -dr com.apple.quarantine "OpenChromecast.app"
+# then right-click → Open, and click Allow when macOS asks to
+# "find devices on your local network" (needed for Cast discovery).
+```
+
 To publish a release (e.g. **v1.0.3**): tag and push:
 
 ```bash
