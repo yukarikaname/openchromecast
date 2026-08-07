@@ -35,7 +35,7 @@ APP="OpenChromecast.app"
 # Apple Silicon release build; override with BIN=<path> if needed.
 BIN="${BIN:-target/aarch64-apple-darwin/release/openchromecast}"
 OUT="${1:-dist/OpenChromecast-macos-arm64.zip}"
-VERSION="${2:-1.0.1}"
+VERSION="${2:-1.0.2}"
 
 # Developer ID codesign identity; empty => ad-hoc signing.
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
@@ -56,6 +56,17 @@ echo ">> building $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/openchromecast"
+
+# Bundle a self-contained mpv (set MPV_BUNDLE_DIR to a portable mpv layout in
+# CI) so macOS users do not have to install mpv. The app resolves it at
+# Contents/Resources/mpv/bin/mpv.
+if [[ -n "${MPV_BUNDLE_DIR:-}" && -d "$MPV_BUNDLE_DIR" ]]; then
+  # MPV_BUNDLE_DIR is a portable mpv layout (bin/mpv + lib/*.dylib). Copy the
+  # whole tree so the binary's @executable_path/../lib rpath still resolves.
+  mkdir -p "$APP/Contents/Resources/mpv"
+  cp -R "$MPV_BUNDLE_DIR/." "$APP/Contents/Resources/mpv/"
+  echo ">> bundled mpv -> Contents/Resources/mpv/"
+fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

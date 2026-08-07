@@ -199,6 +199,10 @@ fn resolve_mpv_path(explicit: &str) -> String {
     if !explicit.is_empty() && explicit != "mpv" {
         return explicit.to_string();
     }
+    // 1) mpv bundled inside the app (self-contained: users install nothing).
+    if let Some(p) = bundled_mpv_path() {
+        return p;
+    }
     #[cfg(windows)]
     {
         if let Ok(root) = std::env::var("LOCALAPPDATA") {
@@ -214,6 +218,36 @@ fn resolve_mpv_path(explicit: &str) -> String {
         }
     }
     "mpv".to_string()
+}
+
+/// Find a mpv shipped inside the app package (next to the executable, or in
+/// the .app bundle's Resources on macOS). Returns `None` when not bundled.
+fn bundled_mpv_path() -> Option<String> {
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    #[cfg(windows)]
+    let candidates = [
+        exe_dir.join("mpv").join("mpv.exe"),
+        exe_dir.join("mpv.exe"),
+    ];
+    // Inside OpenChromecast.app: <exe_dir> = Contents/MacOS, so the bundled
+    // player lives in Contents/Resources/mpv/.
+    #[cfg(target_os = "macos")]
+    let candidates = [
+        exe_dir
+            .join("..")
+            .join("Resources")
+            .join("mpv")
+            .join("bin")
+            .join("mpv"),
+        exe_dir.join("..").join("Resources").join("mpv").join("mpv"),
+        exe_dir.join("mpv"),
+    ];
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let candidates = [exe_dir.join("mpv"), exe_dir.join("mpv").join("mpv")];
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Resolve the VLC executable path (explicit flag, else well-known locations).

@@ -111,6 +111,21 @@ jobs:
           echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PASSWORD=runnerpass" >> "$GITHUB_ENV"
 
+      - name: Bundle portable mpv (macOS, self-contained)
+        if: matrix.pkg == 'app'
+        run: |
+          # Make a portable mpv so macOS users do not install it. Best-effort:
+          # if this fails, the .app ships without mpv and falls back to a
+          # system mpv (MPV_BUNDLE_DIR is read by package-macos.sh).
+          set -euo pipefail
+          brew install mpv dylibbundler >/dev/null 2>&1 || true
+          mkdir -p "$RUNNER_TEMP/mpv/bin"
+          cp "$(command -v mpv)" "$RUNNER_TEMP/mpv/bin/mpv"
+          if command -v dylibbundler >/dev/null 2>&1; then
+            dylibbundler -b -x "$RUNNER_TEMP/mpv/bin/mpv" -d "$RUNNER_TEMP/mpv/lib" -p @executable_path/../lib -of || true
+          fi
+          echo "MPV_BUNDLE_DIR=$RUNNER_TEMP/mpv" >> "$GITHUB_ENV"
+
       - name: Package macOS (.app, signed, zipped)
         if: matrix.pkg == 'app'
         env:
@@ -124,10 +139,24 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: bash scripts/package-macos.sh dist/${{ matrix.artifact }}.app.zip
 
-      - name: Package Windows (zip)
+      - name: Package Windows (zip, self-contained mpv)
         if: matrix.pkg == 'zip'
         shell: pwsh
         run: |
+          # Self-contained: fetch a portable mpv into the package so users do
+          # not have to install anything. (The winget CI.MSVC build is
+          # portable: mpv.exe with ffmpeg statically linked + a few DLLs.)
+          # Best-effort: if the fetch fails, the release still ships and falls
+          # back to a system mpv.
+          try {
+            winget install --id mpv-player.mpv-CI.MSVC --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            New-Item -ItemType Directory -Force dist/stage/mpv | Out-Null
+            $mpvDir = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter mpv.exe -ErrorAction Stop | Select-Object -First 1).DirectoryName
+            Get-ChildItem $mpvDir -File | Where-Object { $_.Name -ne 'mpv.pdb' } | Copy-Item -Destination dist/stage/mpv/
+            Write-Host "Bundled mpv -> dist/stage/mpv/ ($mpvDir)"
+          } catch {
+            Write-Warning "Could not bundle mpv ($_) - release will rely on system mpv."
+          }
           New-Item -ItemType Directory -Force dist/stage | Out-Null
           Copy-Item target/${{ matrix.target }}/release/openchromecast.exe dist/stage/
           Compress-Archive -Path dist/stage -DestinationPath dist/${{ matrix.artifact }}.zip

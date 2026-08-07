@@ -129,11 +129,18 @@ artifacts to a GitHub Release:
 | Linux x86_64 | `openchromecast-linux-x86_64.tar.gz` (binary) |
 | Linux arm64 | `openchromecast-linux-arm64.tar.gz` (binary) |
 
-To publish a release (e.g. **v1.0.1**): tag and push:
+**Player**: the Windows zip is **self-contained** — it bundles a portable `mpv`
+(`mpv/mpv.exe`) so users install nothing. macOS and Linux builds still require
+`mpv` on the system (auto-detected, or `--mpv <path>`).
+
+> License note: the bundled `mpv` is GPL-licensed and ships as a separate
+> component with its own license in the archive (the app itself stays MIT).
+
+To publish a release (e.g. **v1.0.2**): tag and push:
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 The macOS `.app` is ad-hoc signed (`codesign -s -`, see `scripts/package-macos.sh`). For
