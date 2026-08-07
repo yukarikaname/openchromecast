@@ -141,6 +141,21 @@ pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Res
                  Security -> Local Network and allow OpenChromecast, then \
                  restart the app."
             );
+            // Diagnostic aid (macOS): dump the raw error to a file we can read
+            // over SSH. Distinguishes privacy-block (EHOSTUNREACH /
+            // kDNSServiceErr_PolicyDenied) from firewall (EACCES) / interface
+            // issues — the fix differs for each.
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/openchromecast-mdns-error.log")
+                {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{e:#}");
+                }
+            }
             None
         }
     };
