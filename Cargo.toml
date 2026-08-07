@@ -1,6 +1,6 @@
 [package]
 name = "openchromecast"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 description = "Chromecast (Google Cast) receiver emulator written in Rust — 'openchromecast'"
 license = "MIT"

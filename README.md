@@ -136,11 +136,11 @@ artifacts to a GitHub Release:
 > License note: the bundled `mpv` is GPL-licensed and ships as a separate
 > component with its own license in the archive (the app itself stays MIT).
 
-To publish a release (e.g. **v1.0.2**): tag and push:
+To publish a release (e.g. **v1.0.3**): tag and push:
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
 The macOS `.app` is ad-hoc signed (`codesign -s -`, see `scripts/package-macos.sh`). For

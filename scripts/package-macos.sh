@@ -35,7 +35,7 @@ APP="OpenChromecast.app"
 # Apple Silicon release build; override with BIN=<path> if needed.
 BIN="${BIN:-target/aarch64-apple-darwin/release/openchromecast}"
 OUT="${1:-dist/OpenChromecast-macos-arm64.zip}"
-VERSION="${2:-1.0.2}"
+VERSION="${2:-1.0.3}"
 
 # Developer ID codesign identity; empty => ad-hoc signing.
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
