@@ -61,6 +61,14 @@ for pass in 1 2 3 4 5 6; do
   [[ "$after" -eq 0 ]] && break
 done
 
+# install_name_tool invalidates ad-hoc signatures; arm64 macOS refuses to run
+# binaries with broken signatures, so re-sign everything.
+echo ">> re-signing (ad-hoc)..."
+codesign --force --sign - "$OUT/bin/mpv" 2>/dev/null || true
+for d in "$LIBDIR"/*.dylib; do
+  [[ -e "$d" ]] && codesign --force --sign - "$d" 2>/dev/null || true
+done
+
 echo ">> final dependency list of bundled mpv:"
 otool -L "$OUT/bin/mpv"
 
