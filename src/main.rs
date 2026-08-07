@@ -293,7 +293,7 @@ fn probe_local_network() {
         match ip {
             IpAddr::V6(v6) if (v6.segments()[0] & 0xffc0) == 0xfe80 => {
                 // Link-local IPv6. Grab the interface index for the scope id.
-                let scope = unsafe { libc::if_nametoindex(cstr(&name)) };
+                let scope = unsafe { libc::if_nametoindex(cstr(&name).as_ptr()) };
                 if scope != 0 {
                     // Randomize the 64-bit host part, like Apple's sample.
                     let mut oct = v6.octets();
