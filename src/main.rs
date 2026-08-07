@@ -225,7 +225,13 @@ fn default_ipc_path() -> String {
     }
     #[cfg(unix)]
     {
-        format!("/tmp/openchromecast-{}.sock", std::process::id())
+        // temp_dir() (not a hard-coded /tmp) so it lands in the app's writable
+        // temp — under the Mac App Store sandbox /tmp is not writable and the
+        // real path is the container's temp dir.
+        std::env::temp_dir()
+            .join(format!("openchromecast-{}.sock", std::process::id()))
+            .display()
+            .to_string()
     }
 }
 

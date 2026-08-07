@@ -17,12 +17,22 @@
 # or an Apple ID + app-specific password:
 #     APPLE_ID=...  APPLE_TEAM_ID=...  APPLE_PASSWORD=...
 #
+# Mac App Store mode (MAS=1):
+#   * signs with "Apple Distribution: ..." (override with SIGN_IDENTITY)
+#   * embeds the sandbox entitlements (assets/Entitlements.mas.plist)
+#   * embeds a provisioning profile from PROVISION_PROFILE=<path> (required
+#     for App Store distribution) at Contents/embedded.provisionprofile
+#   * skips notarytool (App Store Connect notarizes on upload)
+#
 # Usage:
 #   cargo build --release --target aarch64-apple-darwin
 #   bash scripts/package-macos.sh [output.zip]
 #
-# Example:
+# Example (Developer ID):
 #   bash scripts/package-macos.sh dist/OpenChromecast-macos-arm64.zip
+# Example (Mac App Store):
+#   MAS=1 PROVISION_PROFILE=~/Downloads/OpenChromecast.provisionprofile \
+#     bash scripts/package-macos.sh dist/OpenChromecast-mas-arm64.zip
 
 set -euo pipefail
 
@@ -39,6 +49,14 @@ VERSION="${2:-1.0.3}"
 
 # Developer ID codesign identity; empty => ad-hoc signing.
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+# Mac App Store build (sandbox + Apple Distribution signing + embedded profile).
+MAS="${MAS:-0}"
+if [[ "$MAS" == "1" ]]; then
+  SIGN_IDENTITY="${SIGN_IDENTITY:-Apple Distribution: Yuxing Ren (ZK98823LRA)}"
+  ENTITLEMENTS="${ENTITLEMENTS:-assets/Entitlements.mas.plist}"
+fi
+ENTITLEMENTS="${ENTITLEMENTS:-}"
+PROVISION_PROFILE="${PROVISION_PROFILE:-}"
 # Notarization credentials (used only when SIGN_IDENTITY is set).
 NOTARY_KEY_BASE64="${NOTARY_KEY_BASE64:-}"
 NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
@@ -111,12 +129,36 @@ done
 iconutil -c icns "$ICON_DIR/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 echo ">> app icon -> Contents/Resources/AppIcon.icns"
 
+# App Store builds must embed their provisioning profile before signing so
+# the code signature covers it.
+if [[ -n "$PROVISION_PROFILE" ]]; then
+  if [[ -f "$PROVISION_PROFILE" ]]; then
+    cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
+    echo ">> embedded provisioning profile -> Contents/embedded.provisionprofile"
+  else
+    echo "warning: PROVISION_PROFILE not found: $PROVISION_PROFILE" >&2
+  fi
+fi
+
 if [[ -n "$SIGN_IDENTITY" ]]; then
-  echo ">> signing with '$SIGN_IDENTITY' (hardened runtime)"
-  codesign --force --options runtime --sign "$SIGN_IDENTITY" "$APP"
+  if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
+    echo ">> signing with '$SIGN_IDENTITY' (hardened runtime + entitlements)"
+    codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$APP"
+  else
+    echo ">> signing with '$SIGN_IDENTITY' (hardened runtime)"
+    codesign --force --options runtime --sign "$SIGN_IDENTITY" "$APP"
+  fi
 else
   echo ">> ad-hoc codesign (no SIGN_IDENTITY)"
   codesign --force --sign - "$APP"
+fi
+
+if [[ "$MAS" == "1" ]]; then
+  echo ">> MAS build: verifying sandbox entitlements"
+  codesign -d --entitlements :- "$APP" 2>/dev/null | grep -E 'app-sandbox|network|multicast' | sed 's/^/    /' || true
+  echo ">> MAS build: NOT notarized here — App Store Connect notarizes on upload."
+  echo ">> Upload with: xcrun altool --upload-app -f '$OUT' -t macos \\
+  --apiKey <KEY_ID> --apiIssuer <ISSUER_ID>"
 fi
 
 echo ">> zipping -> $OUT"
@@ -124,7 +166,7 @@ mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 ditto -c -k --keepParent "$APP" "$OUT"
 
-if [[ -n "$SIGN_IDENTITY" && ( -n "$NOTARY_KEY_BASE64" || -n "$APPLE_ID" ) ]]; then
+if [[ "$MAS" != "1" && -n "$SIGN_IDENTITY" && ( -n "$NOTARY_KEY_BASE64" || -n "$APPLE_ID" ) ]]; then
   echo ">> notarizing..."
   STAGE="$(mktemp -d)"
   TMPDIRS+=("$STAGE")

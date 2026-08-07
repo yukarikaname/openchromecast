@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Mac App Store distribution requires the App Sandbox. -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <!-- Listen on TCP 8009 for Cast clients. -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+  <!-- Outgoing connections (Cast sender ↔ receiver data plane). -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <!-- mDNS advertisement REQUIRES multicast send+receive on 224.0.0.251:5353.
+       Without this a sandboxed app's multicast packets are dropped, so the
+       device can never be discovered by Cast senders. -->
+  <key>com.apple.developer.networking.multicast</key>
+  <true/>
+</dict>
+</plist>
