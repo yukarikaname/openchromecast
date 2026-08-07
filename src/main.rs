@@ -113,15 +113,30 @@ pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Res
     );
 
     // --- mDNS advertisement ---
-    let _mdns = mdns::advertise(
+    // Non-fatal: if local-network privacy (macOS 15+) blocks multicast mDNS,
+    // still run the receiver (TCP listener) and tell the user how to fix
+    // discovery instead of silently dying.
+    let _mdns = match mdns::advertise(
         &cli.friendly_name,
         &cli.model,
         &device_id,
         cli.port,
         cli.capabilities,
-    )
-    .context("failed to start mDNS advertisement")?;
-    info!("advertising '{}' ({})", cli.friendly_name, cli.model);
+    ) {
+        Ok(d) => {
+            info!("advertising '{}' ({})", cli.friendly_name, cli.model);
+            Some(d)
+        }
+        Err(e) => {
+            warn!(
+                "mDNS advertisement failed: {e:#}. The device will NOT be \
+                 discoverable. On macOS, open System Settings -> Privacy & \
+                 Security -> Local Network and allow OpenChromecast, then \
+                 restart the app."
+            );
+            None
+        }
+    };
 
     // --- Player backend ---
     let player = match cli.player.to_ascii_lowercase().as_str() {
