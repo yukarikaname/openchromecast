@@ -112,6 +112,13 @@ pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Res
         identity.auth_cert_der().len()
     );
 
+    // macOS 15+ Local Network privacy: the permission prompt is triggered by a
+    // unicast local-network operation, not by multicast mDNS alone. Probe the
+    // local gateway so the prompt appears on first run; otherwise multicast is
+    // silently blocked (EHOSTUNREACH) and the device is undiscoverable.
+    #[cfg(target_os = "macos")]
+    probe_local_network();
+
     // --- mDNS advertisement ---
     // Non-fatal: if local-network privacy (macOS 15+) blocks multicast mDNS,
     // still run the receiver (TCP listener) and tell the user how to fix
@@ -263,6 +270,51 @@ fn bundled_mpv_path() -> Option<String> {
         .iter()
         .find(|p| p.exists())
         .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Best-effort unicast probe of the local network, run on a background thread.
+///
+/// macOS 15+ only prompts for the Local Network permission on a *unicast*
+/// local-network operation; pure multicast mDNS never triggers the prompt and
+/// is silently blocked instead. Probing the gateway/broadcast makes the
+/// permission dialog appear on first run so discovery (mDNS) can work after
+/// the user clicks Allow.
+#[cfg(target_os = "macos")]
+fn probe_local_network() {
+    std::thread::spawn(|| {
+        use std::net::{IpAddr, Ipv4Addr, TcpStream, UdpSocket};
+        use std::time::Duration;
+
+        let mut local: Option<Ipv4Addr> = None;
+        for (_name, ip) in local_ip_address::list_afinet_netifas().unwrap_or_default() {
+            if let IpAddr::V4(v4) = ip {
+                if v4.is_private() {
+                    local = Some(v4);
+                    break;
+                }
+            }
+        }
+        let Some(local) = local else { return };
+        let o = local.octets();
+        // Gateway is usually x.x.x.1 on home networks; port 9 = discard.
+        let targets = [
+            format!("{}.{}.{}.1:9", o[0], o[1], o[2]),
+            format!("{local}:9"),
+        ];
+        for t in targets {
+            if let Ok(addr) = t.parse() {
+                let _ = TcpStream::connect_timeout(&addr, Duration::from_millis(600));
+            }
+        }
+        // A UDP broadcast is also a local-network operation.
+        if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+            let _ = sock.set_broadcast(true);
+            let _ = sock.send_to(
+                b"openchromecast-local-network-probe",
+                format!("{}.{}.{}.255:9", o[0], o[1], o[2]),
+            );
+        }
+    });
 }
 
 /// Resolve the VLC executable path (explicit flag, else well-known locations).
