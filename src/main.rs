@@ -112,17 +112,15 @@ pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Res
         identity.auth_cert_der().len()
     );
 
-    // macOS 15+ Local Network privacy: the permission prompt is triggered by a
-    // unicast local-network operation, not by multicast mDNS alone. Probe the
-    // local gateway so the prompt appears on first run; otherwise multicast is
-    // silently blocked (EHOSTUNREACH) and the device is undiscoverable.
-    #[cfg(target_os = "macos")]
-    probe_local_network();
-
     // --- mDNS advertisement ---
     // Non-fatal: if local-network privacy (macOS 15+) blocks multicast mDNS,
     // still run the receiver (TCP listener) and tell the user how to fix
     // discovery instead of silently dying.
+    //
+    // (No startup probe is needed to "trigger" the macOS Local Network
+    // prompt — on stable macOS the first multicast mDNS send itself surfaces
+    // it. A macOS 27 beta presentation bug suppressed the prompt entirely;
+    // that is not fixable from the app.)
     let _mdns = match mdns::advertise(
         &cli.friendly_name,
         &cli.model,
@@ -141,21 +139,6 @@ pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Res
                  Security -> Local Network and allow OpenChromecast, then \
                  restart the app."
             );
-            // Diagnostic aid (macOS): dump the raw error to a file we can read
-            // over SSH. Distinguishes privacy-block (EHOSTUNREACH /
-            // kDNSServiceErr_PolicyDenied) from firewall (EACCES) / interface
-            // issues — the fix differs for each.
-            #[cfg(target_os = "macos")]
-            {
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/tmp/openchromecast-mdns-error.log")
-                {
-                    use std::io::Write;
-                    let _ = writeln!(f, "{e:#}");
-                }
-            }
             None
         }
     };
@@ -291,95 +274,6 @@ fn bundled_mpv_path() -> Option<String> {
         .iter()
         .find(|p| p.exists())
         .map(|p| p.to_string_lossy().to_string())
-}
-
-/// Best-effort unicast probe of the local network, run on a background thread.
-///
-/// macOS 15+ only prompts for the Local Network permission when the app
-/// performs a *local network operation*; pure multicast mDNS alone is silently
-/// blocked instead of prompting. Apple's recommended way to surface the alert
-/// (TN3179 "Trigger the local network alert") is to `connect()` a UDP socket
-/// to a local network address — this triggers the alert without generating any
-/// traffic. We do that for randomized fe80:: link-local addresses (as Apple's
-/// sample does) plus the IPv4 gateway, a few times at startup, so the prompt
-/// appears on first run and discovery (mDNS) works after the user clicks Allow.
-#[cfg(target_os = "macos")]
-fn probe_local_network() {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpStream, UdpSocket};
-    use std::time::Duration;
-
-    let mut v6_linklocal: Vec<(Ipv6Addr, u32)> = Vec::new();
-    let mut v4_local: Vec<Ipv4Addr> = Vec::new();
-    for (name, ip) in local_ip_address::list_afinet_netifas().unwrap_or_default() {
-        match ip {
-            IpAddr::V6(v6) if (v6.segments()[0] & 0xffc0) == 0xfe80 => {
-                // Link-local IPv6. Grab the interface index for the scope id.
-                let scope = unsafe { libc::if_nametoindex(cstr(&name).as_ptr()) };
-                if scope != 0 {
-                    // Randomize the 64-bit host part, like Apple's sample.
-                    let mut oct = v6.octets();
-                    for slot in oct[8..16].iter_mut() {
-                        *slot = rand_byte();
-                    }
-                    v6_linklocal.push((Ipv6Addr::from(oct), scope));
-                }
-            }
-            IpAddr::V4(v4) if v4.is_private() => {
-                let o = v4.octets();
-                v4_local.push(v4);
-                v4_local.push(Ipv4Addr::new(o[0], o[1], o[2], 1)); // gateway
-                v4_local.push(Ipv4Addr::new(o[0], o[1], o[2], 255)); // broadcast
-            }
-            _ => {}
-        }
-    }
-    if v6_linklocal.is_empty() && v4_local.is_empty() {
-        return;
-    }
-
-    std::thread::spawn(move || {
-        for _attempt in 0..5 {
-            // Apple-endorsed: UDP connect() to a local address => prompt, no traffic.
-            for (addr, scope) in &v6_linklocal {
-                let sa = SocketAddr::V6(SocketAddrV6::new(*addr, 9, 0, *scope));
-                let _ = UdpSocket::bind("[::]:0").and_then(|s| s.connect(sa));
-            }
-            for ip in &v4_local {
-                let sa = SocketAddr::new(IpAddr::V4(*ip), 9);
-                let _ = UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect(sa));
-                // Secondary: a real TCP connect also counts as a local operation.
-                let _ = TcpStream::connect_timeout(&sa, Duration::from_millis(400));
-            }
-            std::thread::sleep(Duration::from_millis(800));
-        }
-    });
-}
-
-/// C string helper for `if_nametoindex` without allocating a CString each time.
-#[cfg(target_os = "macos")]
-fn cstr(s: &str) -> std::ffi::CString {
-    std::ffi::CString::new(s).unwrap_or_default()
-}
-
-/// Cheap non-crypto random byte (xorshift seeded once) — enough for a random
-/// link-local host part; avoids pulling in the `rand` crate.
-#[cfg(target_os = "macos")]
-fn rand_byte() -> u8 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static STATE: AtomicU64 = AtomicU64::new(0);
-    let mut x = STATE.load(Ordering::Relaxed);
-    if x == 0 {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9e3779b97f4a7c15);
-        x = seed ^ 0x9e3779b97f4a7c15;
-    }
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    STATE.store(x, Ordering::Relaxed);
-    (x >> 56) as u8
 }
 
 /// Resolve the VLC executable path (explicit flag, else well-known locations).

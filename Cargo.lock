@@ -2000,7 +2000,6 @@ dependencies = [
  "embed-resource",
  "fs4",
  "ico",
- "libc",
  "local-ip-address",
  "mdns-sd",
  "png",
