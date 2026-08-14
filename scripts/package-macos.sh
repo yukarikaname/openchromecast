@@ -38,7 +38,7 @@ set -euo pipefail
 
 # Temp dirs created during packaging; removed on exit.
 TMPDIRS=()
-cleanup() { for d in "${TMPDIRS[@]}"; do rm -rf "$d"; done; }
+cleanup() { for d in "${TMPDIRS[@]+"${TMPDIRS[@]}"}"; do rm -rf "$d"; done; }
 trap cleanup EXIT
 
 APP="OpenChromecast.app"
@@ -135,6 +135,21 @@ if [[ -n "$PROVISION_PROFILE" ]]; then
   if [[ -f "$PROVISION_PROFILE" ]]; then
     cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
     echo ">> embedded provisioning profile -> Contents/embedded.provisionprofile"
+    # The sandbox needs the FULL entitlement set from the profile
+    # (application-identifier, team-identifier, keychain-access-groups, ...),
+    # not just our hand-written plist — otherwise the sandbox container can't
+    # be created and the app fails to launch ("Launchd job spawn failed").
+    if [[ "$MAS" == "1" ]]; then
+      GEN="$(mktemp -d)"
+      TMPDIRS+=("$GEN")
+      if security cms -D -i "$PROVISION_PROFILE" 2>/dev/null \
+          | plutil -extract Entitlements xml1 -o "$GEN/Entitlements.derived.plist" - 2>/dev/null; then
+        ENTITLEMENTS="$GEN/Entitlements.derived.plist"
+        echo ">> entitlements derived from provisioning profile"
+      else
+        echo "warning: could not extract Entitlements from profile; falling back to $ENTITLEMENTS" >&2
+      fi
+    fi
   else
     echo "warning: PROVISION_PROFILE not found: $PROVISION_PROFILE" >&2
   fi
