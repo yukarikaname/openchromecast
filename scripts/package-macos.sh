@@ -139,13 +139,28 @@ if [[ -n "$PROVISION_PROFILE" ]]; then
     # (application-identifier, team-identifier, keychain-access-groups, ...),
     # not just our hand-written plist — otherwise the sandbox container can't
     # be created and the app fails to launch ("Launchd job spawn failed").
+    # The profile carries only its own keys (app-id/team/multicast) — merge in
+    # our app-sandbox + network keys, which the profile does not contain.
     if [[ "$MAS" == "1" ]]; then
       GEN="$(mktemp -d)"
       TMPDIRS+=("$GEN")
+      STATIC_ENT="${ENTITLEMENTS:-assets/Entitlements.mas.plist}"
       if security cms -D -i "$PROVISION_PROFILE" 2>/dev/null \
-          | plutil -extract Entitlements xml1 -o "$GEN/Entitlements.derived.plist" - 2>/dev/null; then
-        ENTITLEMENTS="$GEN/Entitlements.derived.plist"
-        echo ">> entitlements derived from provisioning profile"
+          | plutil -extract Entitlements xml1 -o "$GEN/Entitlements.profile.plist" - 2>/dev/null; then
+        if command -v python3 >/dev/null 2>&1; then
+          python3 - "$GEN/Entitlements.profile.plist" "$STATIC_ENT" "$GEN/Entitlements.mas.plist" <<'PY'
+import plistlib, sys
+merged = plistlib.load(open(sys.argv[1], 'rb'))
+merged.update(plistlib.load(open(sys.argv[2], 'rb')))
+with open(sys.argv[3], 'wb') as f:
+    plistlib.dump(merged, f)
+PY
+          ENTITLEMENTS="$GEN/Entitlements.mas.plist"
+          echo ">> entitlements merged from provisioning profile + sandbox/network"
+        else
+          ENTITLEMENTS="$GEN/Entitlements.profile.plist"
+          echo ">> entitlements from provisioning profile only (python3 not found)"
+        fi
       else
         echo "warning: could not extract Entitlements from profile; falling back to $ENTITLEMENTS" >&2
       fi
