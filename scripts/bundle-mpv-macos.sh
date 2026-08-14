@@ -61,6 +61,23 @@ for pass in 1 2 3 4 5 6; do
   [[ "$after" -eq 0 ]] && break
 done
 
+# dyld4 (macOS 26/27) ABORTS on duplicate LC_RPATH entries (SIGABRT at
+# launch). dylibbundler adds @executable_path/../lib on top of the one a
+# Homebrew build already carries, producing two identical entries. Dedupe to
+# exactly one on the executable and every dylib — BEFORE re-signing.
+dedupe_rpath() {
+  local f="$1"
+  while otool -l "$f" 2>/dev/null | grep -q 'path @executable_path/../lib'; do
+    install_name_tool -delete_rpath '@executable_path/../lib' "$f" 2>/dev/null || break
+  done
+  install_name_tool -add_rpath '@executable_path/../lib' "$f" 2>/dev/null || true
+}
+echo ">> deduplicating @executable_path/../lib rpath..."
+dedupe_rpath "$OUT/bin/mpv"
+for d in "$LIBDIR"/*.dylib; do
+  [[ -e "$d" ]] && dedupe_rpath "$d"
+done
+
 # install_name_tool invalidates ad-hoc signatures; arm64 macOS refuses to run
 # binaries with broken signatures, so re-sign everything.
 echo ">> re-signing (ad-hoc)..."
