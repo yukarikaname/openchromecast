@@ -73,7 +73,10 @@ dedupe_rpath() {
   n="$(otool -l "$f" 2>/dev/null | grep -c 'cmd LC_RPATH' || true)"
   guard=0
   while [[ "${n:-0}" -gt 0 && "$guard" -lt 60 ]]; do
-    p="$(otool -l "$f" 2>/dev/null | awk '/cmd LC_RPATH/{getline; sub(/^[[:space:]]*path /,""); sub(/ \(offset.*/,""); print; exit}')"
+    # `otool -l` emits "cmd LC_RPATH" then "cmdsize" then "path <value>" —
+    # match the `path ` line directly so we extract the real value (which may
+    # or may not end in a slash).
+    p="$(otool -l "$f" 2>/dev/null | awk '/path @/{sub(/^[[:space:]]*path /,""); sub(/ \(offset.*/,""); print; exit}')"
     [[ -z "$p" ]] && break
     install_name_tool -delete_rpath "$p" "$f" 2>/dev/null || true
     install_name_tool -delete_rpath "${p%/}" "$f" 2>/dev/null || true
