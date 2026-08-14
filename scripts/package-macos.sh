@@ -181,13 +181,25 @@ xattr -cr "$APP" 2>/dev/null || true
 
 # App Store sandbox (90296) requires EVERY executable in the bundle to carry
 # the app-sandbox entitlement — including the bundled mpv, which was only
-# ad-hoc signed by bundle-mpv-macos.sh. Re-sign it with the same (merged)
-# entitlements before signing the app.
+# ad-hoc signed by bundle-mpv-macos.sh. Re-sign it with a MINIMAL sandbox-only
+# entitlements plist: nested executables must NOT carry the app's
+# application-identifier (that needs its own provisioning profile, and
+# TestFlight flags the mismatch as 90885).
 if [[ "$MAS" == "1" && -n "$ENTITLEMENTS" && -d "$APP/Contents/Resources/mpv" ]]; then
+  MPV_ENT="$(mktemp -d)/Entitlements.mpv.plist"
+  TMPDIRS+=("$(dirname "$MPV_ENT")")
+  cat > "$MPV_ENT" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+</dict></plist>
+PLIST
   for exe in "$APP/Contents/Resources/mpv/bin/"*; do
     if [[ -f "$exe" && -x "$exe" ]]; then
       echo ">> sandbox-signing bundled executable: $exe"
-      codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$exe" 2>/dev/null || true
+      codesign --force --options runtime --entitlements "$MPV_ENT" --sign "$SIGN_IDENTITY" "$exe" 2>/dev/null || true
     fi
   done
 fi
