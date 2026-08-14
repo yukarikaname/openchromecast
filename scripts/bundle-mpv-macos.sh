@@ -63,12 +63,23 @@ done
 
 # dyld4 (macOS 26/27) ABORTS on duplicate LC_RPATH entries (SIGABRT at
 # launch). dylibbundler adds @executable_path/../lib on top of the one a
-# Homebrew build already carries, producing two identical entries. Dedupe to
-# exactly one on the executable and every dylib — BEFORE re-signing.
+# Homebrew build already carries — and the entries can be mixed with/without a
+# trailing slash, which install_name_tool matches EXACTLY, so a hard-coded
+# path silently fails to delete some of them. Strip every rpath entry (trying
+# the exact value plus slash variants) until none remain, then add exactly one.
 dedupe_rpath() {
   local f="$1"
-  while otool -l "$f" 2>/dev/null | grep -q 'path @executable_path/../lib'; do
-    install_name_tool -delete_rpath '@executable_path/../lib' "$f" 2>/dev/null || break
+  local n guard p
+  n="$(otool -l "$f" 2>/dev/null | grep -c 'cmd LC_RPATH' || true)"
+  guard=0
+  while [[ "${n:-0}" -gt 0 && "$guard" -lt 60 ]]; do
+    p="$(otool -l "$f" 2>/dev/null | awk '/cmd LC_RPATH/{getline; sub(/^[[:space:]]*path /,""); sub(/ \(offset.*/,""); print; exit}')"
+    [[ -z "$p" ]] && break
+    install_name_tool -delete_rpath "$p" "$f" 2>/dev/null || true
+    install_name_tool -delete_rpath "${p%/}" "$f" 2>/dev/null || true
+    install_name_tool -delete_rpath "${p%/}/" "$f" 2>/dev/null || true
+    n="$(otool -l "$f" 2>/dev/null | grep -c 'cmd LC_RPATH' || true)"
+    guard=$((guard + 1))
   done
   install_name_tool -add_rpath '@executable_path/../lib' "$f" 2>/dev/null || true
 }
@@ -76,6 +87,16 @@ echo ">> deduplicating @executable_path/../lib rpath..."
 dedupe_rpath "$OUT/bin/mpv"
 for d in "$LIBDIR"/*.dylib; do
   [[ -e "$d" ]] && dedupe_rpath "$d"
+done
+# Fail loudly if a binary still carries a duplicate — shipping a crashing mpv
+# is worse than failing the build.
+for f in "$OUT/bin/mpv" "$LIBDIR"/*.dylib; do
+  [[ -e "$f" ]] || continue
+  cnt="$(otool -l "$f" 2>/dev/null | grep -c 'cmd LC_RPATH' || true)"
+  if [[ "${cnt:-0}" -gt 1 ]]; then
+    echo "!! ERROR: $f still has $cnt LC_RPATH entries after dedupe" >&2
+    exit 1
+  fi
 done
 
 # install_name_tool invalidates ad-hoc signatures; arm64 macOS refuses to run
