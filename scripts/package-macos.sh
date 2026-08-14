@@ -179,6 +179,19 @@ fi
 # attributes BEFORE signing so the code signature covers the clean state.
 xattr -cr "$APP" 2>/dev/null || true
 
+# App Store sandbox (90296) requires EVERY executable in the bundle to carry
+# the app-sandbox entitlement — including the bundled mpv, which was only
+# ad-hoc signed by bundle-mpv-macos.sh. Re-sign it with the same (merged)
+# entitlements before signing the app.
+if [[ "$MAS" == "1" && -n "$ENTITLEMENTS" && -d "$APP/Contents/Resources/mpv" ]]; then
+  for exe in "$APP/Contents/Resources/mpv/bin/"*; do
+    if [[ -f "$exe" && -x "$exe" ]]; then
+      echo ">> sandbox-signing bundled executable: $exe"
+      codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$exe" 2>/dev/null || true
+    fi
+  done
+fi
+
 if [[ -n "$SIGN_IDENTITY" ]]; then
   if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
     echo ">> signing with '$SIGN_IDENTITY' (hardened runtime + entitlements)"
