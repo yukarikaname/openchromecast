@@ -99,7 +99,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key>        <string>AppIcon</string>
   <key>CFBundleExecutable</key>      <string>openchromecast</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
-  <key>LSMinimumSystemVersion</key>  <string>10.15</string>
+  <!-- arm64-only build: App Store validation requires deployment target
+       >= 12.0 for single-architecture (non-universal) submissions. -->
+  <key>LSMinimumSystemVersion</key>  <string>12.0</string>
+  <!-- App Store validation (90242) requires an LSApplicationCategoryType. -->
+  <key>LSApplicationCategoryType</key><string>public.app-category.entertainment</string>
   <key>LSUIElement</key>             <true/>
   <key>NSHighResolutionCapable</key> <true/>
   <key>NSHumanReadableCopyright</key><string>MIT License</string>
