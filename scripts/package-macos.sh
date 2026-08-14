@@ -202,6 +202,13 @@ PLIST
       codesign --force --options runtime --entitlements "$MPV_ENT" --sign "$SIGN_IDENTITY" "$exe" 2>/dev/null || true
     fi
   done
+  # App Store validation also requires every dylib in the bundle to carry a
+  # real signature (ad-hoc/unsigned dylibs are rejected). Dylibs are libraries,
+  # so they get a plain signature — no sandbox entitlement needed.
+  while IFS= read -r dylib; do
+    echo ">> signing bundled dylib: ${dylib#"$APP"/}"
+    codesign --force --sign "$SIGN_IDENTITY" "$dylib" 2>/dev/null || true
+  done < <(find "$APP/Contents/Resources/mpv" -name '*.dylib' -type f)
 fi
 
 if [[ -n "$SIGN_IDENTITY" ]]; then
