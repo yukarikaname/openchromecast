@@ -45,9 +45,60 @@ jobs:
       - name: Test
         run: cargo test --release
 
-      - name: Upload binary artifact
+      # --- Package the SAME artifacts the Release workflow ships, so a CI
+      #     artifact is byte-for-byte the same thing a release produces. ---
+
+      - name: Bundle portable mpv (macOS, self-contained)
+        if: runner.os == 'macOS'
+        run: |
+          # Make a portable mpv so macOS users do not install it. Best-effort:
+          # if bundling fails the step warns but CI continues and the .app
+          # falls back to a system mpv.
+          set -euo pipefail
+          brew install mpv dylibbundler >/dev/null 2>&1 || true
+          bash scripts/bundle-mpv-macos.sh "$(command -v mpv)" "$RUNNER_TEMP/mpv" \
+            && echo "MPV_BUNDLE_DIR=$RUNNER_TEMP/mpv" >> "$GITHUB_ENV" \
+            || echo "!! mpv bundling failed; .app will rely on a system mpv"
+
+      - name: Package macOS (.app, ad-hoc signed, zipped)
+        if: runner.os == 'macOS'
+        # CI builds with the host default target (aarch64-apple-darwin on
+        # macos-latest), so the binary lives in target/release, not under the
+        # explicit target dir the Release workflow uses.
+        env:
+          BIN: target/release/openchromecast
+        run: bash scripts/package-macos.sh dist/openchromecast-macos.app.zip
+
+      - name: Package Windows (zip, self-contained mpv)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Self-contained: fetch a portable mpv into the package so users do
+          # not have to install anything. Best-effort: if the fetch fails, the
+          # artifact still ships and falls back to a system mpv.
+          try {
+            winget install --id mpv-player.mpv-CI.MSVC --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            New-Item -ItemType Directory -Force dist/stage/mpv | Out-Null
+            $mpvDir = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter mpv.exe -ErrorAction Stop | Select-Object -First 1).DirectoryName
+            Get-ChildItem $mpvDir -File | Where-Object { $_.Name -ne 'mpv.pdb' } | Copy-Item -Destination dist/stage/mpv/
+            Write-Host "Bundled mpv -> dist/stage/mpv/ ($mpvDir)"
+          } catch {
+            Write-Warning "Could not bundle mpv ($_) - artifact will rely on system mpv."
+          }
+          New-Item -ItemType Directory -Force dist/stage | Out-Null
+          Copy-Item target/release/openchromecast.exe dist/stage/
+          Compress-Archive -Path dist/stage -DestinationPath dist/openchromecast-windows.zip
+
+      - name: Package Linux (tar.gz)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/stage
+          cp target/release/openchromecast dist/stage/
+          tar -czf dist/openchromecast-linux.tar.gz -C dist/stage openchromecast
+
+      - name: Upload packaged artifact
         uses: actions/upload-artifact@v4
         with:
           name: openchromecast-${{ runner.os }}
-          path: target/release/openchromecast${{ runner.os == 'Windows' && '.exe' || '' }}
+          path: dist/
           if-no-files-found: error
