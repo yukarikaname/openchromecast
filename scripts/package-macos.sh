@@ -174,6 +174,11 @@ PY
   fi
 fi
 
+# Downloaded profiles/assets carry com.apple.quarantine (set by the browser),
+# which App Store validation rejects (ITMS-91109). Strip ALL extended
+# attributes BEFORE signing so the code signature covers the clean state.
+xattr -cr "$APP" 2>/dev/null || true
+
 if [[ -n "$SIGN_IDENTITY" ]]; then
   if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
     echo ">> signing with '$SIGN_IDENTITY' (hardened runtime + entitlements)"
