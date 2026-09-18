@@ -1,9 +1,31 @@
 # openchromecast
 
 **"openchromecast"** — a Chromecast (Google Cast) **receiver emulator** written in Rust.
-It makes a PC on your LAN pretend to be a Chromecast so that unmodified Cast senders
-(the Android YouTube app, Google Home, Chrome, ...) cast media straight to this machine,
-which plays it with [mpv](https://mpv.io/).
+It makes a PC on your LAN pretend to be a Chromecast so that Cast senders can hand it a
+media URL, which it plays with [mpv](https://mpv.io/). (Stock Google apps additionally
+require real device credentials — see below.)
+
+## Relationship to Open Screen
+
+[Open Screen](https://chromium.googlesource.com/openscreen) is Google's reference Cast stack.
+Its `cast/standalone_receiver` is a **Cast Streaming** receiver (mirroring / remoting): it
+reconstructs the RTP/RTCP stream, decodes it and renders it locally. openchromecast is a
+**flinging** receiver instead: a sender hands it a `contentId` URL and this machine fetches and
+plays that URL with mpv/VLC. The two are complementary, not competing — the only overlap is the
+thin control channel (TLS framing, device auth, heartbeat, receiver namespace).
+
+| | Open Screen | openchromecast |
+|---|---|---|
+| Model | Mirroring / remoting (Cast Streaming) | Flinging (Cast V2 media receiver) |
+| TLS control port | 8010 (+ UDP 2344) | 8009 |
+| Media source | sender-encoded RTP/RTCP stream | a `contentId` URL handed to mpv/VLC |
+| Playback | decodes + renders the stream itself (SDL) | delegates to mpv/VLC |
+| Has | `…webrtc`, `…remoting`, `…setup`/`…discovery` | `…media`, `…youtube.mdx`, `SET_VOLUME`, `QUEUE_*` |
+| Does not have | flinging `…media` (`LOAD`/`PLAY`/`PAUSE`/`SEEK`) | `…webrtc`, RTP/RTCP, remoting, stream decode |
+
+Open Screen deliberately leaves flinging to closed-source APIs — its spec states that most
+`…media` messages are unsupported and that play/pause/seek are ignored. openchromecast implements
+exactly that flinging flow; it is **not** a reimplementation of the Streaming receiver.
 
 ## Status
 
@@ -13,9 +35,10 @@ which plays it with [mpv](https://mpv.io/).
 | Cast V2 TLS transport + framing             | ✅ implemented           |
 | Device auth handshake (`...tp.deviceauth`)  | ✅ implemented (RSA, verified) |
 | Receiver control (`GET_STATUS`/`LAUNCH`/`STOP`/`SET_VOLUME`) | ✅ verified end-to-end |
-| Media namespace (`LOAD`/`PLAY`/`PAUSE`/`SEEK`/`STOP`/`GET_STATUS`) | ✅ verified end-to-end |
+| Flinging media namespace (`LOAD`/`PLAY`/`PAUSE`/`SEEK`/`STOP`/`GET_STATUS`, queues) | ✅ verified end-to-end |
 | YouTube namespace (`...youtube.mdx`)        | 🔶 minimal / WIP         |
 | Playing via mpv                             | ✅ implemented           |
+| Screen/tab mirroring (Cast Streaming)       | ❌ out of scope — use Open Screen |
 | Accepted by the *stock* Android YouTube app | ❌ blocked by certificate validation (see below) |
 
 > The full protocol path (discovery → status → launch → load → play/pause/seek → stop) has been
@@ -32,17 +55,16 @@ RSASSA-PKCS#1 v1.5 (RSA 2048) over `sender_nonce || peer_cert_der`.
 
 A self-signed certificate can never path-build to those private anchors, so the **unmodified
 Android YouTube app / Google Home** reject it — the device won't show up, or the connection fails
-at auth time. This is exactly the "identity" problem you identified. To make the *stock* apps work
-you must supply the credentials of a real device via `--cert` / `--key` (extract them from a
-rooted device — see `docs/adb-testing.md`). Everything else in the protocol is implemented and
-verified end-to-end with `pychromecast`.
+at auth time. To make the *stock* apps work you must supply the credentials of a real device via
+`--cert` / `--key` (extract them from a rooted device — see `docs/adb-testing.md`). Everything else
+in the protocol is implemented and verified end-to-end with `pychromecast`.
 
 ## Architecture
 
 ```
                      LAN
 ┌──────────────────────────────┐
-│  Android YouTube app         │  mDNS browse "_googlecast._tcp.local"
+│  Cast sender                 │  mDNS browse "_googlecast._tcp.local"
 │       │                     │  ───────────────▶  PC
 │       │                     │
 │       ▼ TLS :8009            │
@@ -118,8 +140,8 @@ Use `--no-tray` for headless/server use (CI, SSH, protocol testing).
 
 ## Release & packaging
 
-CI builds and packages `v*` tags via `.github/workflows/release.yml` and uploads the
-artifacts to a GitHub Release:
+CI (`.github/workflows/release.yml`) builds and packages release artifacts and uploads
+them to a GitHub Release:
 
 | OS | Artifact |
 |----|----------|
@@ -146,13 +168,6 @@ xattr -dr com.apple.quarantine "OpenChromecast.app"
 # "find devices on your local network" (needed for Cast discovery).
 ```
 
-To publish a release (e.g. **v1.0.3**): tag and push:
-
-```bash
-git tag v1.0.3
-git push origin v1.0.3
-```
-
 The macOS `.app` is ad-hoc signed (`codesign -s -`, see `scripts/package-macos.sh`). For
 notarized public distribution, set an Apple Developer ID certificate in the CI secrets and
 adjust the script (see the note inside it).
@@ -171,13 +186,11 @@ cargo run --bin cast-sniff -- --listen 0.0.0.0:8009 --target 192.168.1.50:8009 -
 
 ## Roadmap
 
-- [ ] Verify the hand-written protobuf against live captures (use `cast-sniff`).
 - [ ] Full YouTube `mdx` namespace (playlist, queue, remote control).
 - [ ] HTTP setup server on `:8008` (`/setup/eureka_info`) for Google Home registration.
 - [ ] Pin down the exact `ca`/`id` TXT requirements of modern Cast SDK versions.
-- [ ] Test end-to-end with `pychromecast` / `catt` (they skip cert validation — fastest protocol test).
 - [ ] Optional FFmpeg player backend.
-- [ ] CI with `cargo test` + integration tests against a mock sender.
+- [ ] Integration tests against a mock sender.
 
 ## License
 
