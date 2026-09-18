@@ -40,6 +40,11 @@ time = { version = "0.3", features = ["std"] }
 uuid = { version = "1", features = ["v4"] }
 winit = "0.30"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The tray icon uses libappindicator/GTK on Linux. winit does not initialize
+# GTK, so the tray needs its own thread that calls gtk::init() + gtk::main().
+gtk = "0.18"
+
 [build-dependencies]
 # Embeds assets/icon.ico into the Windows executable (taskbar/Explorer icon).
 # Locates rc.exe via vswhere (more reliable than winres on bare rustup+VS).

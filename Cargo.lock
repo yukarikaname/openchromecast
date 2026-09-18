@@ -1999,6 +1999,7 @@ dependencies = [
  "clap",
  "embed-resource",
  "fs4",
+ "gtk",
  "ico",
  "local-ip-address",
  "mdns-sd",

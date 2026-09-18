@@ -7,14 +7,22 @@
 //!
 //! The tray owns the winit event loop on the main thread (required on macOS);
 //! the receiver itself runs on a background tokio runtime.
+//!
+//! On Linux winit talks to X11/Wayland directly and never initializes GTK, but
+//! the tray (`libappindicator`) needs an initialized GTK and a running GTK main
+//! loop. The tray therefore gets its own GTK thread there (see
+//! `spawn_gtk_tray`); menu events are forwarded back into winit with an
+//! `EventLoopProxy`.
 
 use crate::config::Cli;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Notify;
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use tracing::{error, info};
+#[cfg(not(target_os = "linux"))]
+use tray_icon::TrayIcon;
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::{Icon, TrayIconBuilder};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -23,18 +31,35 @@ use winit::window::WindowId;
 const ID_START: &str = "start-with-system";
 const ID_EXIT: &str = "exit";
 
+/// A tray event forwarded from the platform tray thread into the winit event
+/// loop, so a click actually wakes the loop (it would otherwise sit in
+/// `ControlFlow::Wait` forever and never service the event).
+#[derive(Debug)]
+enum UserEvent {
+    Menu(MenuEvent),
+}
+
 /// Run the tray + receiver. Blocks until the user picks Exit.
 pub fn run(cli: Cli) -> Result<()> {
-    let event_loop = EventLoop::new()?;
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Wait);
+
+    // Tray callbacks fire on the tray thread (the GTK thread on Linux), not on
+    // the winit thread, so forward them through the event loop proxy.
+    let proxy = event_loop.create_proxy();
+    MenuEvent::set_event_handler(Some(move |event| {
+        let _ = proxy.send_event(UserEvent::Menu(event));
+    }));
+
     let mut app = TrayApp {
         cli,
         shutdown: Arc::new(Notify::new()),
+        #[cfg(not(target_os = "linux"))]
         tray: None,
+        #[cfg(not(target_os = "linux"))]
         start_item: None,
         auto: None,
         started: false,
-        exit_requested: false,
     };
     event_loop.run_app(&mut app)?;
     Ok(())
@@ -43,14 +68,17 @@ pub fn run(cli: Cli) -> Result<()> {
 struct TrayApp {
     cli: Cli,
     shutdown: Arc<Notify>,
+    /// On Windows/macOS the tray lives on the winit/main thread; on Linux it is
+    /// owned by the dedicated GTK thread (`spawn_gtk_tray`).
+    #[cfg(not(target_os = "linux"))]
     tray: Option<TrayIcon>,
+    #[cfg(not(target_os = "linux"))]
     start_item: Option<CheckMenuItem>,
     auto: Option<auto_launch::AutoLaunch>,
     started: bool,
-    exit_requested: bool,
 }
 
-impl ApplicationHandler for TrayApp {
+impl ApplicationHandler<UserEvent> for TrayApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         if self.started {
             return;
@@ -69,14 +97,9 @@ impl ApplicationHandler for TrayApp {
     ) {
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.exit_requested {
-            event_loop.exit();
-            return;
-        }
-        // Tray-icon delivers menu clicks on a global channel; poll it here.
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            self.handle_menu(event);
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Menu(menu) => self.handle_menu(event_loop, menu),
         }
     }
 }
@@ -84,38 +107,33 @@ impl ApplicationHandler for TrayApp {
 impl TrayApp {
     fn setup(&mut self) -> Result<()> {
         self.auto = build_auto_launch();
-
-        // --- Menu ---
-        let menu = Menu::new();
-        let title = MenuItem::with_id("title", "OpenChromecast", false, None);
         let start_checked = self
             .auto
             .as_ref()
             .map(|a| a.is_enabled().unwrap_or(false))
             .unwrap_or(false);
-        let start_item =
-            CheckMenuItem::with_id(ID_START, "Start with system", true, start_checked, None);
-        let exit_item = MenuItem::with_id(ID_EXIT, "Exit", true, None);
-        menu.append_items(&[
-            &title,
-            &PredefinedMenuItem::separator(),
-            &start_item,
-            &PredefinedMenuItem::separator(),
-            &exit_item,
-        ])?;
-        self.start_item = Some(start_item);
 
         // --- Tray icon ---
-        let builder = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip("OpenChromecast")
-            .with_icon(make_icon());
-        // macOS menu-bar icons are monochrome templates; the system recolours
-        // them to match the menu bar (light/dark).
-        #[cfg(target_os = "macos")]
-        let builder = builder.with_icon_as_template(true);
-        let tray = builder.build()?;
-        self.tray = Some(tray);
+        // Linux: winit does not run a GTK loop, so the tray gets its own GTK
+        // thread (GTK must be initialized there, and gtk::main() must run for
+        // the AppIndicator to show up).
+        #[cfg(target_os = "linux")]
+        spawn_gtk_tray(start_checked);
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let (menu, start_item) = build_menu(start_checked)?;
+            self.start_item = Some(start_item);
+            let builder = TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_tooltip("OpenChromecast")
+                .with_icon(make_icon());
+            // macOS menu-bar icons are monochrome templates; the system
+            // recolours them to match the menu bar (light/dark).
+            #[cfg(target_os = "macos")]
+            let builder = builder.with_icon_as_template(true);
+            self.tray = Some(builder.build()?);
+        }
 
         // --- Receiver on a background tokio runtime ---
         let cli = self.cli.clone();
@@ -137,7 +155,7 @@ impl TrayApp {
         Ok(())
     }
 
-    fn handle_menu(&mut self, event: MenuEvent) {
+    fn handle_menu(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
         match event.id.0.as_str() {
             ID_START => {
                 if let Some(a) = &self.auto {
@@ -146,8 +164,13 @@ impl TrayApp {
                     if let Err(e) = result {
                         error!("autostart toggle failed: {e}");
                     }
-                    if let Some(item) = &self.start_item {
-                        item.set_checked(enable);
+                    // GTK toggles the check item on click by itself; Windows
+                    // and macOS need an explicit update.
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        if let Some(item) = &self.start_item {
+                            item.set_checked(enable);
+                        }
                     }
                     info!("start with system: {enable}");
                 }
@@ -155,11 +178,68 @@ impl TrayApp {
             ID_EXIT => {
                 info!("exit requested");
                 self.shutdown.notify_waiters();
-                self.exit_requested = true;
+                event_loop.exit();
             }
             other => info!("unhandled menu item: {other}"),
         }
     }
+}
+
+/// Build the tray context menu. Returns the menu plus the "Start with system"
+/// check item so the caller can keep it in sync (Linux does not need it: GTK
+/// toggles the check state on click by itself).
+fn build_menu(start_checked: bool) -> Result<(Menu, CheckMenuItem)> {
+    let menu = Menu::new();
+    let title = MenuItem::with_id("title", "OpenChromecast", false, None);
+    let start_item =
+        CheckMenuItem::with_id(ID_START, "Start with system", true, start_checked, None);
+    let exit_item = MenuItem::with_id(ID_EXIT, "Exit", true, None);
+    menu.append_items(&[
+        &title,
+        &PredefinedMenuItem::separator(),
+        &start_item,
+        &PredefinedMenuItem::separator(),
+        &exit_item,
+    ])?;
+    Ok((menu, start_item))
+}
+
+/// Linux only: run the tray on a dedicated GTK thread.
+///
+/// winit uses X11/Wayland directly and never initializes GTK, but the tray
+/// (`libappindicator`) needs an initialized GTK and a running GTK main loop.
+/// `gtk::main()` blocks forever, so this thread owns the tray for the lifetime
+/// of the process.
+#[cfg(target_os = "linux")]
+fn spawn_gtk_tray(start_checked: bool) {
+    std::thread::spawn(move || {
+        if let Err(e) = gtk::init() {
+            error!("GTK init failed; tray icon disabled: {e}");
+            return;
+        }
+        let (menu, _start_item) = match build_menu(start_checked) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("failed to build tray menu: {e:#}");
+                return;
+            }
+        };
+        // Kept alive until `gtk::main()` (which never returns); dropping it
+        // would remove the tray icon.
+        let _tray = match TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("OpenChromecast")
+            .with_icon(make_icon())
+            .build()
+        {
+            Ok(t) => t,
+            Err(e) => {
+                error!("failed to create tray icon: {e:#}");
+                return;
+            }
+        };
+        gtk::main();
+    });
 }
 
 /// Build an auto-launch handle from the current executable, preserving the
