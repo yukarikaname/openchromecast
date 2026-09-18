@@ -184,13 +184,13 @@ Quick passive capture with the bundled proxy (great for verifying the hand-writt
 cargo run --bin cast-sniff -- --listen 0.0.0.0:8009 --target 192.168.1.50:8009 --out ./capture
 ```
 
-## Roadmap
+### Not planned
 
-- [ ] Full YouTube `mdx` namespace (playlist, queue, remote control).
-- [ ] HTTP setup server on `:8008` (`/setup/eureka_info`) for Google Home registration.
-- [ ] Pin down the exact `ca`/`id` TXT requirements of modern Cast SDK versions.
-- [ ] Optional FFmpeg player backend.
-- [ ] Integration tests against a mock sender.
+- **Screen/tab mirroring** — that is Cast Streaming; use Open Screen's receiver.
+- **An FFmpeg playback backend** — mpv/VLC already decode everything; delegating playback is
+  deliberate, not a stopgap.
+- **Full YouTube `mdx` namespace / HTTP `:8008` setup server** — both target the stock Google
+  apps, which the certificate wall (above) blocks anyway.
 
 ## License
 
