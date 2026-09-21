@@ -148,12 +148,14 @@ them to a GitHub Release:
 | Windows x86_64 | `openchromecast-windows-x86_64.zip` (exe) |
 | Windows arm64 | `openchromecast-windows-arm64.zip` (exe) |
 | macOS arm64 (Apple Silicon) | `openchromecast-macos-arm64.app.zip` (`.app` bundle, ad-hoc signed) |
-| Linux x86_64 | `openchromecast-linux-x86_64.tar.gz` (binary) |
-| Linux arm64 | `openchromecast-linux-arm64.tar.gz` (binary) |
+| Debian / Ubuntu (amd64, arm64) | `openchromecast_<version>_<arch>.deb` |
+| Fedora / RHEL (x86_64, aarch64) | `openchromecast-<version>-1.<arch>.rpm` |
 
 **Player**: the Windows zip is **self-contained** — it bundles a portable `mpv`
-(`mpv/mpv.exe`) so users install nothing. macOS and Linux builds still require
-`mpv` on the system (auto-detected, or `--mpv <path>`).
+(`mpv/mpv.exe`) so users install nothing. The macOS `.app` and Linux packages do
+**not** bundle a player: the `.deb` / `.rpm` declare **`mpv` as a dependency**
+(and recommend `vlc`), so it is pulled in automatically. Otherwise a system
+`mpv` / `vlc` is auto-detected, or pass `--mpv <path>` / `--vlc <path>`.
 
 > License note: the bundled `mpv` is GPL-licensed and ships as a separate
 > component with its own license in the archive (the app itself stays MIT).

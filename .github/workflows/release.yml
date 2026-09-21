@@ -27,12 +27,18 @@ jobs:
             os: ubuntu-latest
             artifact: openchromecast-linux-x86_64
             target: x86_64-unknown-linux-gnu
-            pkg: tar
+            pkg: linux
+            goarch: amd64
+            debarch: amd64
+            rpmarch: x86_64
           - name: linux-arm64
             os: ubuntu-24.04-arm
             artifact: openchromecast-linux-arm64
             target: aarch64-unknown-linux-gnu
-            pkg: tar
+            pkg: linux
+            goarch: arm64
+            debarch: arm64
+            rpmarch: aarch64
           - name: macos-arm64
             os: macos-latest
             artifact: openchromecast-macos-arm64
@@ -74,6 +80,19 @@ jobs:
             libwayland-dev \
             libxdo-dev
 
+      - name: Set up Go (for nFPM)
+        if: runner.os == 'Linux'
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install nFPM
+        if: runner.os == 'Linux'
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Configure MSVC ARM64 cross toolchain
         if: matrix.target == 'aarch64-pc-windows-msvc'
         uses: ilammy/msvc-dev-cmd@v1
@@ -87,12 +106,24 @@ jobs:
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package Linux (tar.gz)
-        if: matrix.pkg == 'tar'
+      - name: Package Linux (.deb, .rpm)
+        if: matrix.pkg == 'linux'
+        env:
+          GOARCH: ${{ matrix.goarch }}
         run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
           mkdir -p dist/stage
           cp target/${{ matrix.target }}/release/openchromecast dist/stage/
-          tar -czf dist/${{ matrix.artifact }}.tar.gz -C dist/stage openchromecast
+          export VERSION="$version"
+          nfpm package --config packaging/nfpm.yaml --packager deb \
+            --target "dist/openchromecast_${version}_${{ matrix.debarch }}.deb"
+          nfpm package --config packaging/nfpm.yaml --packager rpm \
+            --target "dist/openchromecast-${version}-1.${{ matrix.rpmarch }}.rpm"
 
       - name: Import Apple Developer ID certificate (release signing)
         if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && inputs.macos_signing == 'true'

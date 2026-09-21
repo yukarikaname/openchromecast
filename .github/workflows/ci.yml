@@ -34,6 +34,19 @@ jobs:
             libwayland-dev \
             libxdo-dev
 
+      - name: Set up Go (for nFPM)
+        if: runner.os == 'Linux'
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install nFPM
+        if: runner.os == 'Linux'
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy
@@ -89,12 +102,23 @@ jobs:
           Copy-Item target/release/openchromecast.exe dist/stage/
           Compress-Archive -Path dist/stage -DestinationPath dist/openchromecast-windows.zip
 
-      - name: Package Linux (tar.gz)
+      - name: Package Linux (.deb, .rpm)
         if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          case "$(uname -m)" in
+            x86_64)  GOARCH=amd64; deb=amd64; rpm=x86_64 ;;
+            aarch64) GOARCH=arm64; deb=arm64; rpm=aarch64 ;;
+            *) echo "unsupported architecture: $(uname -m)"; exit 1 ;;
+          esac
           mkdir -p dist/stage
           cp target/release/openchromecast dist/stage/
-          tar -czf dist/openchromecast-linux.tar.gz -C dist/stage openchromecast
+          export GOARCH VERSION="$version"
+          nfpm package --config packaging/nfpm.yaml --packager deb \
+            --target "dist/openchromecast_${version}_${deb}.deb"
+          nfpm package --config packaging/nfpm.yaml --packager rpm \
+            --target "dist/openchromecast-${version}-1.${rpm}.rpm"
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4

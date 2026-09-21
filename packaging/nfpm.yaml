@@ -1,0 +1,48 @@
+# Package definition for .deb and .rpm, built with nFPM (https://nfpm.goreleaser.com).
+#
+# Playback is delegated to an external player, so it is declared as a dependency
+# rather than bundled:
+#   * `mpv` is required (the default backend).
+#   * `vlc` is recommended (used with --player vlc).
+#
+# `arch` and `version` are read from the environment so the same file serves the
+# x86_64 and arm64 CI jobs:
+#   GOARCH  Go architecture name, e.g. amd64 / arm64 (nFPM maps it per packager)
+#   VERSION package version, e.g. 1.0.3
+#
+# Local example:
+#   mkdir -p dist/stage && cp target/release/openchromecast dist/stage/
+#   GOARCH=amd64 VERSION=1.0.3 nfpm package \
+#     --config packaging/nfpm.yaml --packager deb \
+#     --target dist/openchromecast_1.0.3_amd64.deb
+#   GOARCH=amd64 VERSION=1.0.3 nfpm package \
+#     --config packaging/nfpm.yaml --packager rpm \
+#     --target dist/openchromecast-1.0.3-1.x86_64.rpm
+
+name: openchromecast
+arch: ${GOARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+
+section: video
+priority: optional
+maintainer: yukarikaname <yukarikaname@users.noreply.github.com>
+description: |-
+  Chromecast (Google Cast) receiver emulator.
+  Makes a PC on the LAN pretend to be a Chromecast so that Cast senders can
+  fling a media URL to it; the URL is then played with mpv (or VLC).
+vendor: openchromecast
+homepage: https://github.com/yukarikaname/openchromecast
+license: MIT
+
+depends:
+  - mpv
+recommends:
+  - vlc
+
+contents:
+  - src: ./dist/stage/openchromecast
+    dst: /usr/bin/openchromecast
+    file_info:
+      mode: 0755
