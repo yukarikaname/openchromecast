@@ -8,12 +8,12 @@ on:
       # Off by default: releases are unsigned/ad-hoc for now. Turn this on
       # (workflow_dispatch only) to sign + notarize the macOS .app again.
       macos_signing:
-        description: "Sign & notarize the macOS app (Developer ID); dispatch with false to skip"
+        description: "Sign & notarize the macOS app (Developer ID); a tag release does this without being asked"
         type: boolean
         required: false
-        # Releases are signed by default now that the certificate and profile are in secrets, and the
-        # input is the opt-out rather than the opt-in: a tag push has no inputs at all and so always signs.
-        default: true
+        # A release is a tag push, and a tag push signs. A manual run is not a release, so it signs only
+        # when it says so here - the switch never opts a release out, it opts a build in.
+        default: false
 
 permissions:
   contents: write
@@ -128,7 +128,7 @@ jobs:
             --target "dist/openchromecast-${version}-1.${{ matrix.rpmarch }}.rpm"
 
       - name: Import Apple Developer ID certificate (release signing)
-        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && github.event.inputs.macos_signing != 'false'
+        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && (github.event_name == 'push' || github.event.inputs.macos_signing == 'true')
         env:
           MACOS_CERT_BASE64: ${{ secrets.MACOS_CERT_BASE64 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -167,8 +167,10 @@ jobs:
       - name: Package macOS (.app, signed, zipped)
         if: matrix.pkg == 'app'
         env:
-          # Empty only when a dispatch explicitly opted out; a tag push has no inputs and signs.
-          SIGN_IDENTITY: ${{ github.event.inputs.macos_signing != 'false' && secrets.MACOS_SIGN_IDENTITY || '' }}
+          # A tag release signs; a manual run has to ask. This is compared against `github.event.inputs`
+          # and not against `inputs` on purpose: `inputs` is typed, and a boolean there is never equal to
+          # the string 'true' - which is how the switch came to do nothing at all.
+          SIGN_IDENTITY: ${{ (github.event_name == 'push' || github.event.inputs.macos_signing == 'true') && secrets.MACOS_SIGN_IDENTITY || '' }}
           NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
