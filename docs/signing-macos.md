@@ -28,8 +28,14 @@ You need a paid Apple Developer account. Then, at <https://developer.apple.com/a
 3. **Profiles** → a **Developer ID** profile (or **Mac App Store** profile) for that App ID, including the
    certificate from step 2. Download the `.provisionprofile`.
 4. Note the **Team ID** (10 characters, shown next to your team name).
-5. For notarization, **App Store Connect → Users and Access → Integrations → App Store Connect API**: make a
-   key with the **Developer** role, and keep the `.p8`, its **Key ID** and the **Issuer ID**.
+5. For notarization: **App Store Connect → Users and Access → Integrations → App Store Connect API**.
+   - If the page has no **Team Keys** tab yet, the **Account Holder** has to **Request Access** to the API
+     first. It is one checkbox and a review, and nothing below works until it is approved.
+   - Create a **Team Key**, not an Individual one. Apple's own words: individual keys "aren't able to use
+     Provisioning endpoints, access Sales and Finance, or `notaryTool`". Creating a team key takes an
+     **Account Holder** or **Admin**; give it at least the **Developer** role.
+   - Keep the `.p8` (downloadable **once**), its **Key ID**, and the **Issuer ID** — the issuer is a
+     team-key thing and `notarytool` requires it.
 
 ## Continuous integration (Developer ID)
 
@@ -37,7 +43,7 @@ Set these repository secrets (`gh secret set NAME < file`, or the repo's Setting
 
 | Secret | What it is |
 |---|---|
-| `MACOS_SIGN_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` — exactly as `security find-identity -v -p codesigning` prints it |
+| `MACOS_SIGN_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` — exactly as `security find-identity -v -p codesigning` prints it. This project's team is **`ZK98823LRA`**, the same one `package-macos.sh` already names as its default App Store identity. |
 | `MACOS_CERT_BASE64` | the `.p12` from step 2, `base64 -i cert.p12` |
 | `MACOS_CERT_PASSWORD` | the `.p12`'s password |
 | `MACOS_PROVISION_PROFILE_BASE64` | the `.provisionprofile` from step 3, base64-encoded |
@@ -68,6 +74,24 @@ NOTARY_ISSUER_ID=00000000-0000-0000-0000-000000000000 \
 For the **Mac App Store** add `MAS=1`; that path sandboxes the app and uses
 `assets/Entitlements.mas.plist` (app sandbox + network client/server + multicast), and App Store Connect
 notarizes on upload rather than here.
+
+## What ends up in the Actions log
+
+No secret content, and that is by construction rather than by luck: the `.p12`, the profile and the `.p8` are
+each written straight to a file with `base64 --decode > …`, so they are never on the log; the keychain password
+is the literal `runnerpass`, a throwaway on an ephemeral runner; and there is no `set -x` in the workflow or in
+the script, which is the one thing that would undo all of it.
+
+What *is* printed, and is not secret:
+
+- the signing identity, `>> signing with 'Developer ID Application: … (TEAMID)'` — the certificate's common
+  name and the team, both of which are readable from any copy of the signed app anyway;
+- the notary key's length and the issuer's last four characters, from the self-check whose whole purpose is to
+  let a 401 be traced to one field. Apple documents both as identifiers rather than credentials; the `.p8` is
+  the credential and it never appears;
+- `PROVISION_PROFILE=<path>` — a path on the runner, not the profile.
+
+If the identity line is unwelcome regardless, it is one `echo` in `scripts/package-macos.sh`.
 
 ## Checking what actually got signed
 
