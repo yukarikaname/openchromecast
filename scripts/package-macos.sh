@@ -214,10 +214,10 @@ fi
 
 if [[ -n "$SIGN_IDENTITY" ]]; then
   if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
-    echo ">> signing with '$SIGN_IDENTITY' (hardened runtime + entitlements)"
+    echo ">> signing (hardened runtime + entitlements)"
     codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$APP"
   else
-    echo ">> signing with '$SIGN_IDENTITY' (hardened runtime)"
+    echo ">> signing (hardened runtime)"
     codesign --force --options runtime --sign "$SIGN_IDENTITY" "$APP"
   fi
 else
