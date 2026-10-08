@@ -96,19 +96,14 @@ appended, so next/previous can at least walk back through the tracks cast during
 That is a heuristic, not Cast semantics — it cannot know the sender's real playlist, order or
 repeat mode. If a sender ever sends a real queue, the handling exists but has never run.
 
-### ⚠️ The hard wall: device certificate validation
+### Stock Google apps need real device credentials
 
-Real Chromecasts present a device certificate issued by **Google's Cast CA**. The Android Cast SDK
-validates the whole chain. We reverse-engineered the exact check from Chromium's open-source
-validator (`cast_cert_validator.cc`): the chain `client_auth_certificate + intermediate_certificate`
-must path-build to **two built-in Cast trust anchors**, and the device auth signature must be
-RSASSA-PKCS#1 v1.5 (RSA 2048) over `sender_nonce || peer_cert_der`.
-
-A self-signed certificate can never path-build to those private anchors, so the **unmodified
-Android YouTube app / Google Home** reject it — the device won't show up, or the connection fails
-at auth time. To make the *stock* apps work you must supply the credentials of a real device via
-`--cert` / `--key` (extract them from a rooted device — see `docs/adb-testing.md`). Everything else
-in the protocol is implemented and verified end-to-end with `pychromecast`.
+Real Chromecasts carry a device certificate issued by Google's Cast CA, and the Android Cast SDK
+validates the whole chain against two trust anchors that only Google holds. A self-signed
+certificate cannot pass that, so the **unmodified Android YouTube app / Google Home** reject this
+receiver at auth time. Give it the credentials of a real device with `--cert` / `--key` to satisfy
+them (see `docs/adb-testing.md`). Everything else in the protocol is implemented and verified end
+to end with `pychromecast`.
 
 ## Architecture
 
@@ -189,41 +184,14 @@ redirect output, e.g. `openchromecast.exe *> app.log`.
 
 Use `--no-tray` for headless/server use (CI, SSH, protocol testing).
 
-## Release & packaging
+## Install
 
-CI (`.github/workflows/release.yml`) builds and packages release artifacts and uploads
-them to a GitHub Release:
+Prebuilt artifacts are on the releases page: a self-contained Windows zip (it bundles a portable
+`mpv`, so nothing else has to be installed), a macOS `.app`, and `.deb` / `.rpm` packages for
+Debian/Ubuntu and Fedora/RHEL that declare `mpv` as a dependency.
 
-| OS | Artifact |
-|----|----------|
-| Windows x86_64 | `openchromecast-windows-x86_64.zip` (exe) |
-| Windows arm64 | `openchromecast-windows-arm64.zip` (exe) |
-| macOS arm64 (Apple Silicon) | `openchromecast-macos-arm64.app.zip` (`.app` bundle, ad-hoc signed) |
-| Debian / Ubuntu (amd64, arm64) | `openchromecast_<version>_<arch>.deb` |
-| Fedora / RHEL (x86_64, aarch64) | `openchromecast-<version>-1.<arch>.rpm` |
-
-**Player**: the Windows zip is **self-contained** — it bundles a portable `mpv`
-(`mpv/mpv.exe`) so users install nothing. The macOS `.app` and Linux packages do
-**not** bundle a player: the `.deb` / `.rpm` declare **`mpv` as a dependency**
-(and recommend `vlc`), so it is pulled in automatically. Otherwise a system
-`mpv` / `vlc` is auto-detected, or pass `--mpv <path>` / `--vlc <path>`.
-
-> License note: the bundled `mpv` is GPL-licensed and ships as a separate
-> component with its own license in the archive (the app itself stays MIT).
-
-**macOS first run** (release builds are Developer ID signed and notarized): after
-downloading the `.app.zip`, macOS Gatekeeper quarantines it, so first clear the
-quarantine flag, then open and allow the local-network prompt:
-
-```bash
-xattr -dr com.apple.quarantine "OpenChromecast.app"
-# then right-click → Open, and click Allow when macOS asks to
-# "find devices on your local network" (needed for Cast discovery).
-```
-
-A tag release signs the macOS `.app` with a Developer ID certificate and notarizes it; the
-certificate and the App Store Connect API key come from CI secrets. A local build made with
-`scripts/package-macos.sh` is ad-hoc signed instead, which is fine for testing.
+> The bundled `mpv` is GPL-licensed and ships as a separate component with its own license in the
+> archive; the app itself stays MIT.
 
 ## Reverse engineering & testing with ADB
 
@@ -243,7 +211,7 @@ cargo run --bin cast-sniff -- --listen 0.0.0.0:8009 --target 192.168.1.50:8009 -
 - **An FFmpeg playback backend** — mpv/VLC already decode everything; delegating playback is
   deliberate, not a stopgap.
 - **Full YouTube `mdx` namespace / HTTP `:8008` setup server** — both target the stock Google
-  apps, which the certificate wall (above) blocks anyway.
+  apps, which the device-credential wall (above) blocks anyway.
 
 ## License
 
