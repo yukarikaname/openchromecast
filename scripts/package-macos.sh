@@ -45,7 +45,10 @@ APP="OpenChromecast.app"
 # Apple Silicon release build; override with BIN=<path> if needed.
 BIN="${BIN:-target/aarch64-apple-darwin/release/openchromecast}"
 OUT="${1:-dist/OpenChromecast-macos-arm64.zip}"
-VERSION="${2:-1.0.3}"
+# The crate's own version, because a default written here goes stale the next time the version is bumped -
+# which is how a v1.0.4 release came to ship an app whose Info.plist says 1.0.3. The workflow passes no
+# version, so this is the one that is used, and `Cargo.toml` is the only place it is written.
+VERSION="${2:-$(grep -m1 '^version' "$REPO_ROOT/Cargo.toml" | sed -E 's/.*"([^"]+)".*/\1/')}"
 
 # Developer ID codesign identity; empty => ad-hoc signing.
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
