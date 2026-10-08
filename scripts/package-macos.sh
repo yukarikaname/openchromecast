@@ -58,13 +58,11 @@ fi
 ENTITLEMENTS="${ENTITLEMENTS:-}"
 PROVISION_PROFILE="${PROVISION_PROFILE:-}"
 
-# A Developer ID build that carries a managed entitlement is signed like a sandboxed one: with the
-# entitlement, and with the profile that grants it. Multicast networking is the case in point - Apple grants
-# it per App ID, so the entitlement on its own is not enough and a signature without the profile does not
-# authorize it. Keyed on the profile rather than on a flag, because the profile is the thing that decides.
-if [[ "$MAS" != "1" && -n "$PROVISION_PROFILE" ]]; then
-  ENTITLEMENTS="${ENTITLEMENTS:-assets/Entitlements.developerid.plist}"
-fi
+# Nothing extra is signed onto a Developer ID build, and that is deliberate rather than an omission. The
+# multicast entitlement is a *sandbox* entitlement: it is what lets a sandboxed app do what an unsandboxed
+# one may do anyway, and a process claiming it outside the sandbox is killed at spawn - "Launchd job spawn
+# failed", which reads like a signing problem and is not one. A Developer ID app reaches the local network
+# through the permission the Info.plist asks for below, and needs no entitlement to.
 # Notarization credentials (used only when SIGN_IDENTITY is set).
 NOTARY_KEY_BASE64="${NOTARY_KEY_BASE64:-}"
 NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
@@ -143,7 +141,7 @@ echo ">> app icon -> Contents/Resources/AppIcon.icns"
 
 # App Store builds must embed their provisioning profile before signing so
 # the code signature covers it.
-if [[ -n "$PROVISION_PROFILE" ]]; then
+if [[ "$MAS" == "1" && -n "$PROVISION_PROFILE" ]]; then
   if [[ -f "$PROVISION_PROFILE" ]]; then
     cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
     echo ">> embedded provisioning profile -> Contents/embedded.provisionprofile"
