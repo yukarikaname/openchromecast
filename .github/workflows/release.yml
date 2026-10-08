@@ -8,10 +8,12 @@ on:
       # Off by default: releases are unsigned/ad-hoc for now. Turn this on
       # (workflow_dispatch only) to sign + notarize the macOS .app again.
       macos_signing:
-        description: "Sign & notarize the macOS app (Developer ID)"
+        description: "Sign & notarize the macOS app (Developer ID); dispatch with false to skip"
         type: boolean
         required: false
-        default: false
+        # Releases are signed by default now that the certificate and profile are in secrets, and the
+        # input is the opt-out rather than the opt-in: a tag push has no inputs at all and so always signs.
+        default: true
 
 permissions:
   contents: write
@@ -127,7 +129,7 @@ jobs:
             --target "dist/openchromecast-${version}-1.${{ matrix.rpmarch }}.rpm"
 
       - name: Import Apple Developer ID certificate (release signing)
-        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && inputs.macos_signing == 'true'
+        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && github.event.inputs.macos_signing != 'false'
         env:
           MACOS_CERT_BASE64: ${{ secrets.MACOS_CERT_BASE64 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -138,7 +140,9 @@ jobs:
           security create-keychain -p runnerpass "$KEYCHAIN"
           security default-keychain -s "$KEYCHAIN"
           security unlock-keychain -p runnerpass "$KEYCHAIN"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          # `security import` dumps the imported identity - its common name is a person - so its output
+          # goes nowhere. Errors are on stderr and still show.
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
           security set-key-partition-list -S apple-tool:,apple: -s -k runnerpass "$KEYCHAIN"
           echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PASSWORD=runnerpass" >> "$GITHUB_ENV"
@@ -158,7 +162,7 @@ jobs:
             || echo "!! mpv bundling failed; .app will rely on a system mpv"
 
       - name: Embed provisioning profile (release signing)
-        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && env.MACOS_PROFILE_PRESENT == 'true' && inputs.macos_signing == 'true'
+        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && env.MACOS_PROFILE_PRESENT == 'true' && github.event.inputs.macos_signing != 'false'
         env:
           MACOS_PROVISION_PROFILE_BASE64: ${{ secrets.MACOS_PROVISION_PROFILE_BASE64 }}
         run: |
@@ -173,8 +177,8 @@ jobs:
       - name: Package macOS (.app, signed, zipped)
         if: matrix.pkg == 'app'
         env:
-          # Empty unless macos_signing was enabled on a workflow_dispatch run.
-          SIGN_IDENTITY: ${{ inputs.macos_signing == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
+          # Empty only when a dispatch explicitly opted out; a tag push has no inputs and signs.
+          SIGN_IDENTITY: ${{ github.event.inputs.macos_signing != 'false' && secrets.MACOS_SIGN_IDENTITY || '' }}
           NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}

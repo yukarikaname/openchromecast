@@ -191,16 +191,19 @@ xattr -cr "$APP" 2>/dev/null || true
 # the app-sandbox entitlement — including the bundled mpv. It must ALSO carry
 # application-identifier (libsecinit_appsandbox SIGTRAPs at spawn without it)
 # plus its own embedded provisioning profile (else TestFlight flags 90885).
-if [[ "$MAS" == "1" && -n "$ENTITLEMENTS" && -d "$APP/Contents/Resources/mpv" ]]; then
+if [[ -n "$SIGN_IDENTITY" && -d "$APP/Contents/Resources/mpv" ]]; then
+  # Nested code is not the app and has no entitlements of its own - except under the App Sandbox, where
+  # every executable in the bundle must carry app-sandbox. `${arr[@]+...}` is the empty-array-safe form:
+  # macOS still ships bash 3.2 for scripts, where a bare `"${arr[@]}"` under `set -u` is an error.
+  NESTED_ARGS=()
+  if [[ "$MAS" == "1" && -n "$ENTITLEMENTS" ]]; then
+    NESTED_ARGS=(--entitlements "$ENTITLEMENTS")
+    [[ -n "$PROVISION_PROFILE" ]] && NESTED_ARGS+=(--provisioning-profile "$PROVISION_PROFILE")
+  fi
   for exe in "$APP/Contents/Resources/mpv/bin/"*; do
     if [[ -f "$exe" && -x "$exe" ]]; then
-      echo ">> sandbox-signing bundled executable: $exe"
-      if [[ -n "$PROVISION_PROFILE" ]]; then
-        codesign --force --options runtime --entitlements "$ENTITLEMENTS" \
-          --provisioning-profile "$PROVISION_PROFILE" --sign "$SIGN_IDENTITY" "$exe" 2>/dev/null || true
-      else
-        codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$exe" 2>/dev/null || true
-      fi
+      echo ">> signing bundled executable: ${exe#"$APP"/}"
+      codesign --force --options runtime ${NESTED_ARGS[@]+"${NESTED_ARGS[@]}"} --sign "$SIGN_IDENTITY" "$exe"
     fi
   done
   # App Store validation also requires every dylib in the bundle to carry a
@@ -208,7 +211,7 @@ if [[ "$MAS" == "1" && -n "$ENTITLEMENTS" && -d "$APP/Contents/Resources/mpv" ]]
   # so they get a plain signature — no sandbox entitlement needed.
   while IFS= read -r dylib; do
     echo ">> signing bundled dylib: ${dylib#"$APP"/}"
-    codesign --force --sign "$SIGN_IDENTITY" "$dylib" 2>/dev/null || true
+    codesign --force --options runtime --sign "$SIGN_IDENTITY" "$dylib"
   done < <(find "$APP/Contents/Resources/mpv" -name '*.dylib' -type f)
 fi
 
@@ -266,11 +269,22 @@ if [[ "$MAS" != "1" && -n "$SIGN_IDENTITY" && ( -n "$NOTARY_KEY_BASE64" || -n "$
       echo "!! AuthKey .p8 is NOT a valid PEM private key (base64 content wrong?)" >&2; ok=0
     fi
     [[ "$ok" -eq 0 ]] && { echo ">> aborting: fix the flagged notary credential(s) above" >&2; exit 1; }
+    SUBMIT_OUT="$(mktemp)"
     xcrun notarytool submit "$OUT" \
       --key "$STAGE/AuthKey_$NOTARY_KEY_ID.p8" \
       --key-id "$NOTARY_KEY_ID" \
       --issuer "$NOTARY_ISSUER_ID" \
-      --wait
+      --wait 2>&1 | tee "$SUBMIT_OUT"
+    # A rejected submission is the one failure with no local signal: the app is signed, and it is stapling
+    # that fails afterwards. Fetch its log and print the issues rather than leaving a bare "Invalid".
+    if grep -q "status: Invalid" "$SUBMIT_OUT"; then
+      SUB_ID="$(sed -n 's/^ *id: //p' "$SUBMIT_OUT" | tail -1)"
+      echo ">> notarization was rejected; reading the log for $SUB_ID"
+      xcrun notarytool log "$SUB_ID" "$STAGE/notary.json" \
+        --key "$STAGE/AuthKey_$NOTARY_KEY_ID.p8" \
+        --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" >/dev/null 2>&1 || true
+      python3 -c "import json,sys; d=json.load(open(sys.argv[1])); [print('  ', i.get('severity'), i.get('path'), '-', i.get('message')) for i in d.get('issues', [])]" "$STAGE/notary.json" 2>/dev/null || echo "  (no log fetched)"
+    fi
   else
     xcrun notarytool submit "$OUT" \
       --apple-id "$APPLE_ID" \
