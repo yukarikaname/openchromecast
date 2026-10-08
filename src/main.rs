@@ -87,11 +87,33 @@ fn init_tracing(cli: &config::Cli) {
         1 => "debug",
         _ => "trace",
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level)),
-        )
-        .init();
+    let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+
+    // A tray app has no console. Launched the way a person launches it - by double-clicking - its output
+    // goes nowhere at all, which is how a silent fall-back to a player that does nothing stayed invisible
+    // for a whole release while a Cast sender retried at it forever. With no terminal to write to, the log
+    // goes to a file beside mpv's own.
+    match (
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        log_file(),
+    ) {
+        (false, Some(file)) => {
+            tracing_subscriber::fmt()
+                .with_env_filter(filter())
+                .with_writer(file)
+                .with_ansi(false)
+                .init();
+        }
+        _ => tracing_subscriber::fmt().with_env_filter(filter()).init(),
+    }
+}
+
+/// The file a run with no terminal writes its log to, next to mpv's own log.
+///
+/// Created fresh rather than appended to: a log that grows for as long as the app is installed is a log
+/// nobody reads, and what a report is about is one run.
+fn log_file() -> Option<std::fs::File> {
+    std::fs::File::create(std::env::temp_dir().join("openchromecast.log")).ok()
 }
 
 /// The core receiver: identity, mDNS, player backend, TLS listener. Runs until
