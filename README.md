@@ -35,15 +35,63 @@ exactly that flinging flow; it is **not** a reimplementation of the Streaming re
 | Cast V2 TLS transport + framing             | ✅ implemented           |
 | Device auth handshake (`...tp.deviceauth`)  | ✅ implemented (RSA, verified) |
 | Receiver control (`GET_STATUS`/`LAUNCH`/`STOP`/`SET_VOLUME`) | ✅ verified end-to-end |
-| Flinging media namespace (`LOAD`/`PLAY`/`PAUSE`/`SEEK`/`STOP`/`GET_STATUS`, queues) | ✅ verified end-to-end |
+| Flinging media namespace (`LOAD`/`PLAY`/`PAUSE`/`SEEK`/`STOP`/`GET_STATUS`) | ✅ verified end-to-end |
+| Queue commands (`QUEUE_LOAD`/`INSERT`/`NEXT`/`PREV`/`UPDATE`) | 🔶 implemented, never used by a sender — see below |
 | YouTube namespace (`...youtube.mdx`)        | 🔶 minimal / WIP         |
 | Playing via mpv                             | ✅ implemented           |
+| Video casts (fullscreen player window)      | 🔶 implemented, **not verified** — see below |
+| Senders other than VLC for Android          | ❌ untested  |
 | Screen/tab mirroring (Cast Streaming)       | ❌ out of scope — use Open Screen |
 | Accepted by the *stock* Android YouTube app | ❌ blocked by certificate validation (see below) |
 
 > The full protocol path (discovery → status → launch → load → play/pause/seek → stop) has been
 > verified end-to-end against a real Cast SDK client (`pychromecast`) — see
 > `tools/test/pychromecast_probe.py`.
+
+### Sender compatibility, and video
+
+Everything in the table above was exercised with **VLC for Android** as the sender (plus
+`pychromecast` for the raw protocol). Two areas are implemented but effectively **untested**,
+and are called out here rather than left implied:
+
+| Sender / area | State |
+|---|---|
+| VLC for Android — audio | ✅ verified end-to-end |
+| VLC for Android — video | 🔶 implemented, never actually exercised (see below) |
+
+
+**Video is untested because no sender we have tried actually delivers a video track.** The
+receiver does implement it — for a `LOAD` whose media is video it unhides the player window
+and plays fullscreen, and it never opens a window for audio — but that path has never run
+end-to-end. VLC for Android 3.7.1 casts video with the stream chain
+
+```
+sout chain=`chromecast{ip=<receiver>,port=8009,no-video}'
+```
+
+i.e. it strips the video track itself; its retry ("Transcoding video") then fails with
+`cannot create packetizer output (h264)`. Probing both URLs it ends up serving (with mpv's own
+`track-list`) shows a single AAC track and no video at all. Treat video playback as unverified
+until a sender that really sends video has been used.
+
+The audio/video decision is also only as good as the sender's `contentType`, which cannot be
+trusted: VLC labels *every* Cast transcode `audio/x-matroska`, even for an `.mp4` video.
+Deciding from the tracks the player actually opened is the intended follow-up.
+
+### Playlists and queues
+
+The receiver implements the Cast queue commands (`QUEUE_LOAD`, `QUEUE_INSERT`, `QUEUE_NEXT`,
+`QUEUE_PREV`, `QUEUE_UPDATE`) and advertises next/previous in `supportedMediaCommands`. In
+practice **no sender we have tested uses any of them**. Measured against VLC for Android, which
+only ever sends `LOAD`, `GET_STATUS` and `STOP`: not one of its `LOAD` messages carried
+`queueData` or `items`, and no `QUEUE_*` message was observed at all — zero, over the whole
+session.
+
+So the queue code path is **unverified against a real sender**. What the receiver does instead
+is build a queue out of *consecutive casts*: the first `LOAD` starts it and each later `LOAD` is
+appended, so next/previous can at least walk back through the tracks cast during the session.
+That is a heuristic, not Cast semantics — it cannot know the sender's real playlist, order or
+repeat mode. If a sender ever sends a real queue, the handling exists but has never run.
 
 ### ⚠️ The hard wall: device certificate validation
 

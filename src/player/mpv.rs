@@ -29,6 +29,12 @@ use tokio::net::windows::named_pipe::ClientOptions;
 /// Spawn mpv and return a handle to the player actor.
 pub async fn spawn(bin: &str, ipc_path: &str) -> Result<PlayerHandle> {
     let mut cmd = Command::new(bin);
+    // mpv is this app child and is of no use without it: a player left running is a process the user has
+    // to hunt down, and on macOS it is worse than that - it keeps a now-playing entry alive, so a quit app
+    // is still listed as playing. `kill_on_drop` covers the normal ways out, including the tray Quit; a
+    // process this one does not get to run destructors for (SIGKILL, and SIGTERM without a handler) still
+    // leaves it, because there is no PDEATHSIG here to ask for.
+    cmd.kill_on_drop(true);
     cmd.arg("--no-terminal")
         .arg("--idle=yes")
         .arg("--keep-open=yes")
@@ -255,6 +261,8 @@ async fn run_command(conn: &mut MpvConn, cmd: PlayerCommand) -> Result<()> {
             position,
             autoplay,
             video,
+            title,
+            cover,
         } => {
             // Show (or hide) the video window based on content type: video
             // casts play fullscreen (Chromecast-like), audio stays headless.
@@ -262,8 +270,27 @@ async fn run_command(conn: &mut MpvConn, cmd: PlayerCommand) -> Result<()> {
                 json!({"command": ["set_property", "force-window", if video {"yes"} else {"no"}]}),
             )
             .await?;
+            // An external cover-art file shows up as a video (image) track.
+            // Without this, mpv opens a window to display it even for audio
+            // casts. `vid=no` keeps the track in `track-list` (mpv reads the
+            // macOS now-playing artwork from there) while selecting no video
+            // output, so audio stays headless.
+            conn.send_cmd(
+                json!({"command": ["set_property", "vid", if video {"auto"} else {"no"}]}),
+            )
+            .await?;
             conn.send_cmd(json!({"command": ["set_property", "fullscreen", video]}))
                 .await?;
+            // The track is called what the sender called it. Without this mpv names a stream after its URL, which is
+            // how the platform now-playing came to read "stream".
+            if let Some(cover) = cover.filter(|c| !c.is_empty()) {
+                conn.send_cmd(json!({"command": ["set_property", "cover-art-files", [cover]]}))
+                    .await?;
+            }
+            if let Some(title) = title.filter(|t| !t.is_empty()) {
+                conn.send_cmd(json!({"command": ["set_property", "force-media-title", title]}))
+                    .await?;
+            }
             conn.send_cmd(json!({"command": ["loadfile", url, "replace"]}))
                 .await?;
             // Explicitly set pause to the autoplay-opposite. mpv runs with
@@ -355,11 +382,11 @@ async fn handle_event(ev: &str, v: &Value, snapshot: &Arc<Mutex<PlayerSnapshot>>
                         s.position = 0.0;
                     }
                 }
-                "eof-reached" => {
-                    if let Some(true) = data.and_then(|d| d.as_bool()) {
-                        s.state = PlayerState::Ended;
-                    }
-                }
+                // `eof-reached` cannot stand in for "the track finished": mpv
+                // raises it for every way a file can end, including the `stop`
+                // of being replaced by the next LOAD. `end-file` carries the
+                // reason, so that is the only thing we trust below.
+                "eof-reached" => {}
                 _ => {}
             }
         }
@@ -371,6 +398,20 @@ async fn handle_event(ev: &str, v: &Value, snapshot: &Arc<Mutex<PlayerSnapshot>>
             if s.state != PlayerState::Ended {
                 s.state = PlayerState::Playing;
             }
+        }
+        // mpv says *why* a file ended. A sender that tears the old stream down
+        // (VLC closes it while switching profile) ends it with `reason: error`,
+        // which is not the same as reaching the end of the track.
+        "end-file" => {
+            let reason = v.get("reason").and_then(|x| x.as_str()).unwrap_or("");
+            info!("mpv ended the current file (reason={reason})");
+            let mut s = snapshot.lock().await;
+            s.end_error = reason == "error";
+            s.state = if reason == "eof" {
+                PlayerState::Ended
+            } else {
+                PlayerState::Idle
+            };
         }
         _ => {}
     }

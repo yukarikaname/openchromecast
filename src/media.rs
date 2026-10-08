@@ -178,6 +178,35 @@ async fn handle_load(
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0) as f32;
 
+    // The picture the sender offers, when this is the load that carries one: a sender retry burst often
+    // drops `images` after the first, and the first is the one that has it.
+    let cover = match media
+        .get("metadata")
+        .and_then(|m| m.get("images"))
+        .and_then(|i| i.get(0))
+        .and_then(|i| i.get("url"))
+        .and_then(|u| u.as_str())
+    {
+        Some(url) => crate::cover::fetch(url).await.map(|p| p.to_string_lossy().to_string()),
+        None => None,
+    };
+
+    // What the sender says the track is called. It is in `metadata.title`, and it is the name a person
+    // should see - mpv would name the stream after its URL otherwise, which is how now-playing came to
+    // read "stream".
+    let title = media
+        .get("metadata")
+        .and_then(|m| m.get("title"))
+        .and_then(|v| v.as_str())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string());
+
+    // The whole request. What a sender puts in `metadata` and `queueData` is what decides whether a track
+    // can be named and pictured at all, and no sender documents what it sends.
+    if let Ok(text) = serde_json::to_string(payload) {
+        tracing::debug!("LOAD payload: {text}");
+    }
+
     // Remember the media on the active session (echoed back in MEDIA_STATUS).
     // A re-cast of the SAME track is not a new queue entry (no duplicates).
     let session_id;
@@ -252,6 +281,8 @@ async fn handle_load(
                 current_time,
                 autoplay,
                 content_type.starts_with("video"),
+                title,
+                cover,
             )
             .await?;
     }
@@ -311,6 +342,11 @@ async fn media_status(shared: &Shared) -> Option<Value> {
     }
     if snap.state == PlayerState::Ended {
         status["idleReason"] = json!("FINISHED");
+    } else if snap.state == PlayerState::Idle && snap.end_error {
+        // The stream died because the sender switched profiles. That is an
+        // error, not a finished track: reporting FINISHED here is what makes
+        // VLC retry LOAD in a loop.
+        status["idleReason"] = json!("ERROR");
     }
     Some(status)
 }
@@ -389,6 +425,14 @@ fn spawn_status_poller(tx: MessageSink, shared: Shared, session_id: String) {
             }
 
             let snap = shared.player.snapshot().await;
+            // Never push IDLE/Ended unsolicited. Senders like VLC read an
+            // unsolicited IDLE - with any idleReason, FINISHED included - as
+            // "the load failed" while they are still buffering, and switch
+            // stream configuration. They ask GET_STATUS for the rest, and a
+            // message with no requestId is dropped while they wait for one.
+            if matches!(snap.state, PlayerState::Idle | PlayerState::Ended) {
+                continue;
+            }
             let changed = snap.state != last.state
                 || (snap.position - last.position).abs() > 0.5
                 || snap.duration != last.duration;
@@ -457,7 +501,11 @@ async fn play_queue_item(shared: &Shared, autoplay: bool) -> Result<()> {
             0.0,
             autoplay,
             item.content_type.starts_with("video"),
-        )
+        
+                None,
+            
+                None,
+            )
         .await?;
     Ok(())
 }

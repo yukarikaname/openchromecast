@@ -17,6 +17,7 @@ mod proto;
 mod receiver;
 mod server;
 mod state;
+mod cover;
 mod tray;
 mod youtube;
 

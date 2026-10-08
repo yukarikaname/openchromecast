@@ -171,6 +171,9 @@ async fn run_command(conn: &mut RcConn, cmd: PlayerCommand) -> Result<()> {
             position,
             autoplay,
             video: _,
+            // VLC names a track from the stream itself; there is nothing to set.
+            title: _,
+            cover: _,
         } => {
             conn.send("clear").await?;
             conn.send(&format!("add {url}")).await?;

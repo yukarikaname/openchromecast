@@ -26,6 +26,11 @@ pub struct PlayerSnapshot {
     pub duration: f32,
     pub volume: f32,
     pub muted: bool,
+    /// `true` when the last file ended with an error (the sender tore the
+    /// stream down) rather than at its natural end of file. Senders like VLC
+    /// read a FINISHED status as "the load failed" and retry another stream
+    /// profile, so an error must never be reported as FINISHED.
+    pub end_error: bool,
 }
 
 impl Default for PlayerSnapshot {
@@ -36,6 +41,7 @@ impl Default for PlayerSnapshot {
             duration: 0.0,
             volume: 1.0,
             muted: false,
+            end_error: false,
         }
     }
 }
@@ -48,6 +54,11 @@ pub enum PlayerCommand {
         autoplay: bool,
         /// `true` when the cast media has a video track (drives the video window).
         video: bool,
+        /// What the sender says the track is called, which is what the platform shows. `None` when it said
+        /// nothing, in which case mpv keeps naming the stream after its URL.
+        title: Option<String>,
+        /// Where the sender picture was fetched to, if it offered one and it arrived.
+        cover: Option<String>,
     },
     Play,
     Pause,
@@ -74,9 +85,21 @@ impl PlayerHandle {
         Self { tx, snapshot }
     }
 
-    pub async fn load(&self, url: &str, position: f32, autoplay: bool, video: bool) -> Result<()> {
+    pub async fn load(
+        &self,
+        url: &str,
+        position: f32,
+        autoplay: bool,
+        video: bool,
+        title: Option<String>,
+        cover: Option<String>,
+    ) -> Result<()> {
         {
             let mut s = self.snapshot.lock().await;
+            // A new load is starting, so forget how the previous one ended: a
+            // stale error must not colour the acknowledgement we are about to
+            // send back.
+            s.end_error = false;
             // Optimistically mark BUFFERING so the LOAD acknowledgement is not
             // IDLE: senders like VLC retry LOAD in a loop (each retry restarting
             // playback, which kills audio) when they see IDLE in the response.
@@ -90,6 +113,8 @@ impl PlayerHandle {
             position,
             autoplay,
             video,
+            title,
+            cover,
         })
         .await
     }
