@@ -27,6 +27,13 @@ pub struct Session {
     pub queue: Vec<MediaInfo>,
     /// Index of the currently playing item in `queue`.
     pub queue_index: usize,
+    /// Last `sequenceNumber` the sender used. The Cast SDK reads it back out of
+    /// a media status and returns it on its next request, so we echo it.
+    pub sequence_number: Option<i64>,
+    /// Track ids the sender selected (audio/subtitle); echoed back.
+    pub active_track_ids: Option<Vec<i64>>,
+    /// Sender-supplied credentials for the loaded media; echoed back.
+    pub credentials: Option<String>,
 }
 
 /// Global receiver state, shared between all connections.

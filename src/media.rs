@@ -34,6 +34,14 @@ pub async fn handle(
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u32;
 
+    // The Cast SDK keeps the last `sequenceNumber` it saw in a media status and
+    // sends it back on its next request, so remember and echo it.
+    if let Some(n) = payload.get("sequenceNumber").and_then(|v| v.as_i64()) {
+        if let Some(s) = shared.state.lock().await.session.as_mut() {
+            s.sequence_number = Some(n);
+        }
+    }
+
     match kind.as_str() {
         "LOAD" => handle_load(msg, tx, shared, &payload, &rid).await,
         "PLAY" => {
@@ -111,21 +119,118 @@ pub async fn handle(
             }
             respond_media_status(tx, msg, shared, &rid, media_session_id).await
         }
+        "QUEUE_REMOVE" => {
+            // `itemIds` names the entries to drop. Removing the one that is
+            // playing moves on to whatever follows it.
+            let ids: Vec<usize> = payload
+                .get("itemIds")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_u64())
+                        .map(|v| v as usize)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let (changed, playing_removed) = {
+                let mut st = shared.state.lock().await;
+                match st.session.as_mut() {
+                    Some(s) if !s.queue.is_empty() && !ids.is_empty() => {
+                        let current = s.queue_index;
+                        let mut kept = Vec::new();
+                        let mut before = 0usize;
+                        for (i, item) in s.queue.drain(..).enumerate() {
+                            if ids.contains(&i) {
+                                continue;
+                            }
+                            if i < current {
+                                before += 1;
+                            }
+                            kept.push(item);
+                        }
+                        s.queue = kept;
+                        s.queue_index = if s.queue.is_empty() {
+                            0
+                        } else {
+                            before.min(s.queue.len() - 1)
+                        };
+                        (true, ids.contains(&current))
+                    }
+                    _ => (false, false),
+                }
+            };
+            info!("QUEUE_REMOVE ids={ids:?} (changed={changed}, playing_removed={playing_removed})");
+            if changed && playing_removed {
+                play_queue_item(shared, true).await?;
+            }
+            respond_media_status(tx, msg, shared, &rid, media_session_id).await
+        }
+        "QUEUE_REORDER" => {
+            // `itemIds` is the complete new order of the existing entries.
+            let order: Vec<usize> = payload
+                .get("itemIds")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_u64())
+                        .map(|v| v as usize)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let changed = {
+                let mut st = shared.state.lock().await;
+                match st.session.as_mut() {
+                    Some(s) if s.queue.len() > 1 && order.len() == s.queue.len() => {
+                        let mut seen = std::collections::HashSet::new();
+                        let valid = order
+                            .iter()
+                            .all(|i| *i < s.queue.len() && seen.insert(*i));
+                        if valid {
+                            let playing = s.queue.get(s.queue_index).cloned();
+                            let old = std::mem::take(&mut s.queue);
+                            s.queue = order.iter().map(|i| old[*i].clone()).collect();
+                            if let Some(cur) = playing {
+                                s.queue_index = s
+                                    .queue
+                                    .iter()
+                                    .position(|m| m.content_id == cur.content_id)
+                                    .unwrap_or(0);
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            };
+            info!("QUEUE_REORDER (applied={changed})");
+            respond_media_status(tx, msg, shared, &rid, media_session_id).await
+        }
         "QUEUE_UPDATE" => {
             // Next/previous are sent as QUEUE_UPDATE with a `jump` offset by
             // the Android Cast SDK / pychromecast (jump=1 next, jump=-1 prev).
             // Repeat/shuffle settings are acknowledged and otherwise ignored.
             let jump = payload.get("jump").and_then(|v| v.as_i64()).unwrap_or(0);
+            let wanted = payload
+                .get("currentItemId")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
             let moved = {
                 let mut st = shared.state.lock().await;
                 match st.session.as_mut() {
                     Some(s) if !s.queue.is_empty() => {
-                        let target = s.queue_index as i64 + jump;
-                        if target >= 0 && (target as usize) < s.queue.len() {
-                            s.queue_index = target as usize;
-                            true
-                        } else {
-                            false
+                        let target = match wanted {
+                            Some(id) => Some(id),
+                            None if jump >= 0 => Some(s.queue_index + jump as usize),
+                            None => s.queue_index.checked_sub((-jump) as usize),
+                        };
+                        match target {
+                            Some(t) if t < s.queue.len() => {
+                                s.queue_index = t;
+                                true
+                            }
+                            _ => false,
                         }
                     }
                     _ => false,
@@ -207,6 +312,16 @@ async fn handle_load(
         tracing::debug!("LOAD payload: {text}");
     }
 
+    // Sender-supplied extras the Cast SDK expects echoed back in the status.
+    let credentials = media
+        .get("credentials")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let active_track_ids = payload
+        .get("activeTrackIds")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_i64()).collect::<Vec<i64>>());
+
     // Remember the media on the active session (echoed back in MEDIA_STATUS).
     // A re-cast of the SAME track is not a new queue entry (no duplicates).
     let session_id;
@@ -255,6 +370,8 @@ async fn handle_load(
                 stream_type: stream_type.clone(),
             };
             s.media = Some(item.clone());
+            s.credentials = credentials.clone();
+            s.active_track_ids = active_track_ids.clone();
             // Build a playlist from consecutive casts: the first LOAD starts
             // the queue, later LOADs append so next/previous controls become
             // enabled and PREVIOUS can navigate back through cast tracks.
@@ -301,12 +418,16 @@ async fn media_status(shared: &Shared) -> Option<Value> {
     let snap = shared.player.snapshot().await;
     let state_str = player_state_cast(snap.state);
     let media = session.media.as_ref().map(|m| {
-        json!({
+        let mut media = json!({
             "contentId": m.content_id,
             "contentType": m.content_type,
             "streamType": m.stream_type,
             "duration": snap.duration,
-        })
+        });
+        if let Some(c) = &session.credentials {
+            media["credentials"] = json!(c);
+        }
+        media
     });
     let mut status = json!({
         "mediaSessionId": session.media_session_id,
@@ -340,6 +461,9 @@ async fn media_status(shared: &Shared) -> Option<Value> {
             "shuffle": false,
         });
     }
+    if let Some(ids) = &session.active_track_ids {
+        status["activeTrackIds"] = json!(ids);
+    }
     if snap.state == PlayerState::Ended {
         status["idleReason"] = json!("FINISHED");
     } else if snap.state == PlayerState::Idle && snap.end_error {
@@ -359,14 +483,20 @@ async fn respond_media_status(
     _media_session_id: u32,
 ) -> Result<()> {
     if let Some(status) = media_status(shared).await {
-        send_json(
-            tx,
-            "receiver-0",
-            &msg.source_id,
-            NS_MEDIA,
-            &json!({ "requestId": rid, "status": [status], "type": "MEDIA_STATUS" }),
-        )
-        .await?;
+        let mut payload =
+            json!({ "requestId": rid, "status": [status], "type": "MEDIA_STATUS" });
+        // Echo the request's `sequenceNumber` alongside `requestId`.
+        if let Some(n) = shared
+            .state
+            .lock()
+            .await
+            .session
+            .as_ref()
+            .and_then(|s| s.sequence_number)
+        {
+            payload["sequenceNumber"] = json!(n);
+        }
+        send_json(tx, "receiver-0", &msg.source_id, NS_MEDIA, &payload).await?;
     }
     Ok(())
 }

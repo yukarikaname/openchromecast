@@ -185,6 +185,9 @@ impl Session {
             media: None,
             queue: Vec::new(),
             queue_index: 0,
+            sequence_number: None,
+            active_track_ids: None,
+            credentials: None,
         }
     }
 }

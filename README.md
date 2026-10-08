@@ -80,8 +80,11 @@ Deciding from the tracks the player actually opened is the intended follow-up.
 
 ### Playlists and queues
 
-The receiver implements the Cast queue commands (`QUEUE_LOAD`, `QUEUE_INSERT`, `QUEUE_NEXT`,
-`QUEUE_PREV`, `QUEUE_UPDATE`) and advertises next/previous in `supportedMediaCommands`. In
+The receiver implements the Cast queue commands (`QUEUE_LOAD`, `QUEUE_INSERT`, `QUEUE_UPDATE` —
+including its `currentItemId` and `jump` forms — `QUEUE_REMOVE`, `QUEUE_REORDER`, `QUEUE_NEXT`,
+`QUEUE_PREV`) and advertises next/previous in `supportedMediaCommands`. The shapes were checked
+against the string constants and decompiled payload builders of Google's own sender SDK
+(`play-services-cast`), so they match what a Google-based sender puts on the wire. In
 practice **no sender we have tested uses any of them**. Measured against VLC for Android, which
 only ever sends `LOAD`, `GET_STATUS` and `STOP`: not one of its `LOAD` messages carried
 `queueData` or `items`, and no `QUEUE_*` message was observed at all — zero, over the whole
