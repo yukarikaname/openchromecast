@@ -205,10 +205,7 @@ async fn handle_load(
             return Ok(());
         };
         session_id = s.id.clone();
-        let already_this = s
-            .media
-            .as_ref()
-            .is_some_and(|m| m.content_id == content_id);
+        let already_this = s.media.as_ref().is_some_and(|m| m.content_id == content_id);
         // Also dedupe while the same track is still starting up (loading/
         // buffering) so the tail of the burst does not interrupt the opening.
         let starting = matches!(
@@ -244,7 +241,9 @@ async fn handle_load(
         }
     }
 
-    info!("LOAD contentId={content_id} type={content_type} autoplay={autoplay} t={current_time} skip_load={skip_load}");
+    info!(
+        "LOAD contentId={content_id} type={content_type} autoplay={autoplay} t={current_time} skip_load={skip_load}"
+    );
     if !skip_load {
         shared
             .player
@@ -447,10 +446,18 @@ async fn play_queue_item(shared: &Shared, autoplay: bool) -> Result<()> {
         session.media = Some(item.clone());
         item
     };
-    info!("queue: now playing {} ({})", item.content_id, item.content_type);
+    info!(
+        "queue: now playing {} ({})",
+        item.content_id, item.content_type
+    );
     shared
         .player
-        .load(&item.content_id, 0.0, autoplay, item.content_type.starts_with("video"))
+        .load(
+            &item.content_id,
+            0.0,
+            autoplay,
+            item.content_type.starts_with("video"),
+        )
         .await?;
     Ok(())
 }

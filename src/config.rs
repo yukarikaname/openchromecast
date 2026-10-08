@@ -10,9 +10,11 @@ use std::path::PathBuf;
     about = "Chromecast (Google Cast) receiver emulator — 'openchromecast'"
 )]
 pub struct Cli {
-    /// Friendly name shown to Cast senders (mDNS `fn` record).
-    #[arg(long, default_value = "OpenChromecast")]
-    pub friendly_name: String,
+    /// Friendly name shown to Cast senders (mDNS `fn` record). Defaults to this computer's name, which is
+    /// what a person picks out of the list - a row of devices all called "OpenChromecast" is a row nobody
+    /// can choose from.
+    #[arg(long)]
+    pub friendly_name: Option<String>,
 
     /// Model string advertised in mDNS (`md` record).
     #[arg(long, default_value = "Chromecast Ultra")]

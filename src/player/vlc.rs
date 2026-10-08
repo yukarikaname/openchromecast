@@ -21,13 +21,13 @@
 //!   SET_VOLUME -> `volume <0-100>`
 
 use crate::player::{PlayerCommand, PlayerHandle, PlayerSnapshot, PlayerState};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::Command;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::MissedTickBehavior;
 use tracing::{info, warn};
 
@@ -58,9 +58,9 @@ pub async fn spawn(vlc_bin: &str, rc_port: u16) -> Result<PlayerHandle> {
         // CREATE_NO_WINDOW: don't show VLC's console window.
         cmd.creation_flags(0x0800_0000);
     }
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("failed to spawn VLC ({vlc_bin}); use --player none to disable playback"))?;
+    let mut child = cmd.spawn().with_context(|| {
+        format!("failed to spawn VLC ({vlc_bin}); use --player none to disable playback")
+    })?;
 
     let (read_half, write_half) = connect_rc(rc_port)
         .await
@@ -95,9 +95,7 @@ pub async fn spawn(vlc_bin: &str, rc_port: u16) -> Result<PlayerHandle> {
 
     // Actor task: drive commands and poll status every second.
     let (tx, mut rx) = mpsc::channel::<PlayerCommand>(32);
-    let mut conn = RcConn {
-        write: write_half,
-    };
+    let mut conn = RcConn { write: write_half };
     tokio::spawn(async move {
         let mut poll = tokio::time::interval(Duration::from_secs(1));
         poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -216,7 +214,9 @@ async fn handle_rc_line(line: &str, snapshot: &Arc<Mutex<PlayerSnapshot>>) {
     // Tolerantly look for `key: value` pairs anywhere in the line.
     for key in ["state", "time", "length", "volume", "mute"] {
         let marker = format!("{key}:");
-        let Some(idx) = line.find(&marker) else { continue };
+        let Some(idx) = line.find(&marker) else {
+            continue;
+        };
         let value = line[idx + marker.len()..]
             .split_whitespace()
             .next()

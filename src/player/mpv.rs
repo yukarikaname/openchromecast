@@ -12,12 +12,12 @@ use crate::player::{PlayerCommand, PlayerHandle, PlayerSnapshot, PlayerState};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use std::process::Stdio;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{info, warn};
 
@@ -52,7 +52,9 @@ pub async fn spawn(bin: &str, ipc_path: &str) -> Result<PlayerHandle> {
         // there). The file is overwritten on each mpv launch.
         .arg(format!(
             "--log-file={}",
-            std::env::temp_dir().join("openchromecast-mpv.log").display()
+            std::env::temp_dir()
+                .join("openchromecast-mpv.log")
+                .display()
         ))
         .arg("--msg-level=all=info");
     #[cfg(windows)]
@@ -256,8 +258,10 @@ async fn run_command(conn: &mut MpvConn, cmd: PlayerCommand) -> Result<()> {
         } => {
             // Show (or hide) the video window based on content type: video
             // casts play fullscreen (Chromecast-like), audio stays headless.
-            conn.send_cmd(json!({"command": ["set_property", "force-window", if video {"yes"} else {"no"}]}))
-                .await?;
+            conn.send_cmd(
+                json!({"command": ["set_property", "force-window", if video {"yes"} else {"no"}]}),
+            )
+            .await?;
             conn.send_cmd(json!({"command": ["set_property", "fullscreen", video]}))
                 .await?;
             conn.send_cmd(json!({"command": ["loadfile", url, "replace"]}))

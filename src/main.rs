@@ -104,6 +104,9 @@ pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Res
         None => uuid::Uuid::new_v4().simple().to_string(),
     };
 
+    // What a Cast picker will show. The computer's own name unless the run said otherwise.
+    let friendly_name = cli.friendly_name.clone().unwrap_or_else(computer_name);
+
     // --- Device identity (signing key + TLS certificate) ---
     let identity = crypto::Identity::load_or_generate(cli.cert.as_deref(), cli.key.as_deref())
         .context("failed to prepare device identity")?;
@@ -122,14 +125,14 @@ pub(crate) async fn run_receiver(cli: config::Cli, shutdown: Arc<Notify>) -> Res
     // it. A macOS 27 beta presentation bug suppressed the prompt entirely;
     // that is not fixable from the app.)
     let _mdns = match mdns::advertise(
-        &cli.friendly_name,
+        &friendly_name,
         &cli.model,
         &device_id,
         cli.port,
         cli.capabilities,
     ) {
         Ok(d) => {
-            info!("advertising '{}' ({})", cli.friendly_name, cli.model);
+            info!("advertising '{}' ({})", friendly_name, cli.model);
             Some(d)
         }
         Err(e) => {
@@ -246,15 +249,45 @@ fn resolve_mpv_path(explicit: &str) -> String {
     "mpv".to_string()
 }
 
+/// What this computer is called, as the platform's own interface calls it.
+///
+/// The *computer name*, not the DNS host name: `Yukari's MacBook Pro` is what the person in front of it
+/// recognises, and `yukaris-macbook-pro.local` is what nobody does. Each platform keeps its own answer and
+/// none of them is `gethostname`.
+fn computer_name() -> String {
+    #[cfg(target_os = "macos")]
+    if let Ok(out) = std::process::Command::new("scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+    {
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    #[cfg(windows)]
+    if let Ok(name) = std::env::var("COMPUTERNAME") {
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Ok(contents) = std::fs::read_to_string("/etc/hostname") {
+        let name = contents.trim();
+        if !name.is_empty() {
+            return name.to_string();
+        }
+    }
+    // A machine that will not say still has to be called something.
+    "OpenChromecast".to_string()
+}
+
 /// Find a mpv shipped inside the app package (next to the executable, or in
 /// the .app bundle's Resources on macOS). Returns `None` when not bundled.
 fn bundled_mpv_path() -> Option<String> {
     let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
     #[cfg(windows)]
-    let candidates = [
-        exe_dir.join("mpv").join("mpv.exe"),
-        exe_dir.join("mpv.exe"),
-    ];
+    let candidates = [exe_dir.join("mpv").join("mpv.exe"), exe_dir.join("mpv.exe")];
     // Inside OpenChromecast.app: <exe_dir> = Contents/MacOS, so the bundled
     // player lives in Contents/Resources/mpv/.
     #[cfg(target_os = "macos")]
