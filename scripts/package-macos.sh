@@ -165,6 +165,7 @@ if [[ "$MAS" == "1" && -n "$PROVISION_PROFILE" ]]; then
 import plistlib, sys
 merged = plistlib.load(open(sys.argv[1], 'rb'))
 merged.update(plistlib.load(open(sys.argv[2], 'rb')))
+merged.update(plistlib.load(open('assets/Entitlements.nested.plist', 'rb')))
 with open(sys.argv[3], 'wb') as f:
     plistlib.dump(merged, f)
 PY
@@ -196,7 +197,7 @@ if [[ -n "$SIGN_IDENTITY" && -d "$APP/Contents/Resources/mpv" ]]; then
   # Nested code is not the app and has no entitlements of its own - except under the App Sandbox, where
   # every executable in the bundle must carry app-sandbox. `${arr[@]+...}` is the empty-array-safe form:
   # macOS still ships bash 3.2 for scripts, where a bare `"${arr[@]}"` under `set -u` is an error.
-  NESTED_ARGS=()
+  NESTED_ARGS=(--entitlements assets/Entitlements.nested.plist)
   if [[ "$MAS" == "1" && -n "$ENTITLEMENTS" ]]; then
     NESTED_ARGS=(--entitlements "$ENTITLEMENTS")
     [[ -n "$PROVISION_PROFILE" ]] && NESTED_ARGS+=(--provisioning-profile "$PROVISION_PROFILE")

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    The bundled mpv, signed by us with the hardened runtime. mpv runs its interface from built-in Lua
+    scripts, and a Lua engine writes and executes memory that its own code signature does not cover - which
+    the hardened runtime kills, with the crash report saying only "CODESIGNING / Invalid Page". These two
+    keys are what a JIT is allowed to have; without them mpv dies about four milliseconds in, before it has
+    created the IPC socket the app talks to, and the app silently falls back to a player that does nothing.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>
