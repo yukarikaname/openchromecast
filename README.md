@@ -211,7 +211,7 @@ them to a GitHub Release:
 > License note: the bundled `mpv` is GPL-licensed and ships as a separate
 > component with its own license in the archive (the app itself stays MIT).
 
-**macOS first run** (builds are ad-hoc signed / not notarized yet): after
+**macOS first run** (release builds are Developer ID signed and notarized): after
 downloading the `.app.zip`, macOS Gatekeeper quarantines it, so first clear the
 quarantine flag, then open and allow the local-network prompt:
 
@@ -221,9 +221,9 @@ xattr -dr com.apple.quarantine "OpenChromecast.app"
 # "find devices on your local network" (needed for Cast discovery).
 ```
 
-The macOS `.app` is ad-hoc signed (`codesign -s -`, see `scripts/package-macos.sh`). For
-notarized public distribution, set an Apple Developer ID certificate in the CI secrets and
-adjust the script (see the note inside it).
+A tag release signs the macOS `.app` with a Developer ID certificate and notarizes it; the
+certificate and the App Store Connect API key come from CI secrets. A local build made with
+`scripts/package-macos.sh` is ad-hoc signed instead, which is fine for testing.
 
 ## Reverse engineering & testing with ADB
 
