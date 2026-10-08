@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Developer ID distribution, outside the App Store. There is no App Sandbox here - that is what
+    `Entitlements.mas.plist` is for - but a *managed* entitlement is still Apple's to give, and it is given
+    per App ID through a provisioning profile: the profile must be embedded in the bundle and named on the
+    signing line, or the signature does not authorize the entitlement and macOS drops the multicast.
+
+    Only the multicast key is here, and deliberately. An app's entitlements must be a subset of what its
+    profile grants, so listing anything the profile does not carry is a signing failure rather than an
+    extra capability.
+  -->
+  <key>com.apple.developer.networking.multicast</key>
+  <true/>
+</dict>
+</plist>

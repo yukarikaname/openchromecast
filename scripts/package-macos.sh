@@ -57,6 +57,14 @@ if [[ "$MAS" == "1" ]]; then
 fi
 ENTITLEMENTS="${ENTITLEMENTS:-}"
 PROVISION_PROFILE="${PROVISION_PROFILE:-}"
+
+# A Developer ID build that carries a managed entitlement is signed like a sandboxed one: with the
+# entitlement, and with the profile that grants it. Multicast networking is the case in point - Apple grants
+# it per App ID, so the entitlement on its own is not enough and a signature without the profile does not
+# authorize it. Keyed on the profile rather than on a flag, because the profile is the thing that decides.
+if [[ "$MAS" != "1" && -n "$PROVISION_PROFILE" ]]; then
+  ENTITLEMENTS="${ENTITLEMENTS:-assets/Entitlements.developerid.plist}"
+fi
 # Notarization credentials (used only when SIGN_IDENTITY is set).
 NOTARY_KEY_BASE64="${NOTARY_KEY_BASE64:-}"
 NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"

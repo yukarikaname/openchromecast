@@ -59,6 +59,7 @@ jobs:
       # `secrets` is not allowed directly in `if:` conditions; expose the
       # presence of the signing certificate through a job-level env flag.
       MACOS_CERT_PRESENT: ${{ secrets.MACOS_CERT_BASE64 != '' }}
+      MACOS_PROFILE_PRESENT: ${{ secrets.MACOS_PROVISION_PROFILE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -155,6 +156,19 @@ jobs:
           bash scripts/bundle-mpv-macos.sh "$(command -v mpv)" "$RUNNER_TEMP/mpv" \
             && echo "MPV_BUNDLE_DIR=$RUNNER_TEMP/mpv" >> "$GITHUB_ENV" \
             || echo "!! mpv bundling failed; .app will rely on a system mpv"
+
+      - name: Embed provisioning profile (release signing)
+        if: matrix.pkg == 'app' && env.MACOS_CERT_PRESENT == 'true' && env.MACOS_PROFILE_PRESENT == 'true' && inputs.macos_signing == 'true'
+        env:
+          MACOS_PROVISION_PROFILE_BASE64: ${{ secrets.MACOS_PROVISION_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          # A managed entitlement - multicast networking is one, and Apple grants it per App ID - is
+          # authorized by the profile that carries it, so the profile travels with the build as well as with
+          # the signature. `package-macos.sh` embeds it and names it on the signing line when this is set;
+          # without it the entitlement is dropped and mDNS stops working in a sandboxed build.
+          echo "$MACOS_PROVISION_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/openchromecast.provisionprofile"
+          echo "PROVISION_PROFILE=$RUNNER_TEMP/openchromecast.provisionprofile" >> "$GITHUB_ENV"
 
       - name: Package macOS (.app, signed, zipped)
         if: matrix.pkg == 'app'
